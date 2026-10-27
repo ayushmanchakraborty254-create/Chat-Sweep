@@ -63,6 +63,25 @@ describe('Platform Adapters and DOM Fixtures', () => {
       expect(pinnedChat).toBeDefined();
       expect(pinnedChat?.isPinned).toBe(true);
     });
+
+    it('extracts titles correctly when anchor is an empty overlay and title is in sibling container', async () => {
+      document.body.innerHTML = `
+        <nav aria-label="Recent chats">
+          <li class="group relative flex items-center">
+            <a href="/chat/modern-claude-uuid" class="absolute inset-0"></a>
+            <div class="flex items-center min-w-0 grow">
+              <div class="truncate text-sm font-medium">Distributed Systems Architecture Discussion</div>
+            </div>
+            <button aria-label="Chat options">...</button>
+          </li>
+        </nav>
+      `;
+      const adapter = new ClaudeAdapter();
+      const chats = await adapter.getChatList();
+      expect(chats.length).toBe(1);
+      expect(chats[0].id).toBe('modern-claude-uuid');
+      expect(chats[0].title).toBe('Distributed Systems Architecture Discussion');
+    });
   });
 
   describe('ChatGPTAdapter with DOM fixture', () => {

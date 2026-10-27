@@ -208,8 +208,68 @@ export class ChatGPTAdapter implements PlatformAdapter {
     return true;
   }
 
+  private cachedAuthToken: string | null = null;
+
+  private async getChatGPTAuthToken(): Promise<string | null> {
+    if (this.cachedAuthToken) return this.cachedAuthToken;
+    try {
+      const res = await fetch('/api/auth/session', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.accessToken) {
+          this.cachedAuthToken = data.accessToken;
+          return data.accessToken;
+        }
+      }
+    } catch {}
+    return null;
+  }
+
+  private async deleteViaChatGPTApi(chatId: string): Promise<boolean> {
+    try {
+      const token = await this.getChatGPTAuthToken();
+      if (!token) return false;
+
+      const res = await fetch(`/backend-api/conversation/${chatId}`, {
+        method: 'PATCH',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ is_visible: false }),
+      });
+
+      if (res.ok || res.status === 200 || res.status === 204) {
+        return true;
+      }
+    } catch {}
+    return false;
+  }
+
   public async deleteChat(chat: ChatItem): Promise<DeleteResult> {
     const el = chat.elementRef || document.querySelector(`a[href*="${chat.id}"]`);
+
+    // 1. PRIMARY STRATEGY: High-speed API Deletion (Instant, server-side verified)
+    if (chat.id && !chat.id.startsWith('chatgpt_')) {
+      const apiSuccess = await this.deleteViaChatGPTApi(chat.id);
+      if (apiSuccess) {
+        if (el) {
+          const row = el.closest('li, div.group') || el;
+          row.remove();
+        }
+        return {
+          chatId: chat.id,
+          provider: 'chatgpt',
+          title: chat.title,
+          success: true,
+          status: 'deleted',
+          timestamp: Date.now(),
+        };
+      }
+    }
+
+    // 2. FALLBACK STRATEGY: High-speed DOM Automation
     if (!el) {
       return {
         chatId: chat.id,
@@ -223,10 +283,10 @@ export class ChatGPTAdapter implements PlatformAdapter {
     }
 
     try {
-      // Step 1: Hover over chat element to reveal menu dots
+      // Step 1: Fast hover
       el.dispatchEvent(new MouseEvent('pointerenter', { bubbles: true }));
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await sleep(150);
+      await sleep(40);
 
       // Step 2: Locate menu trigger button
       let menuTrigger = queryWithFallbacks<HTMLElement>(el, CHATGPT_SELECTORS.menuTrigger);
@@ -253,13 +313,13 @@ export class ChatGPTAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(menuTrigger);
-      await sleep(250);
+      await sleep(80);
 
       // Step 3: Wait for popup menu
       const menu = await waitForElement<HTMLElement>(
         CHATGPT_SELECTORS.menuPopup,
         document,
-        2500
+        1500
       );
       if (!menu) {
         return {
@@ -292,13 +352,13 @@ export class ChatGPTAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(deleteItem);
-      await sleep(350);
+      await sleep(90);
 
       // Step 5: Wait for confirm dialog
       const dialog = await waitForElement<HTMLElement>(
         CHATGPT_SELECTORS.confirmDialog,
         document,
-        3000
+        1500
       );
       if (!dialog) {
         return {
@@ -335,8 +395,12 @@ export class ChatGPTAdapter implements PlatformAdapter {
 
       await triggerHumanClick(confirmBtn);
 
-      // Step 7: Verify deletion
+      // Step 7: Fast verification
       const verified = await this.verifyDeletion(chat);
+      if (verified && el) {
+        const row = el.closest('li, div.group') || el;
+        row.remove();
+      }
 
       return {
         chatId: chat.id,
@@ -360,14 +424,24 @@ export class ChatGPTAdapter implements PlatformAdapter {
   }
 
   public async verifyDeletion(chat: ChatItem): Promise<boolean> {
-    await sleep(600);
+    // 1. Immediate check: 0ms wait if element is already detached
     if (chat.elementRef && !document.body.contains(chat.elementRef)) {
       return true;
     }
     if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
       return true;
     }
-    return waitForElementToDisappear(`a[href*="${chat.id}"]`, 2000);
+    // 2. Poll in short intervals
+    for (let i = 0; i < 6; i++) {
+      await sleep(30);
+      if (chat.elementRef && !document.body.contains(chat.elementRef)) {
+        return true;
+      }
+      if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private hashCode(str: string): number {

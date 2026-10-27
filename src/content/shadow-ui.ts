@@ -132,10 +132,14 @@ export class ShadowUIManager {
       if (!this.shadow.contains(container)) {
         this.shadow.appendChild(container);
       }
+      // Clean up any lingering confirm modal or non-progress overlay
+      container.querySelector('#cs-confirm-modal')?.remove();
+      container.querySelectorAll('.cs-modal-overlay:not(#cs-progress-modal)').forEach((el) => el.remove());
+
       if (this.lastProgress) {
-        const existingOverlay = container.querySelector('.cs-modal-overlay');
-        if (!existingOverlay) {
-          const progressModal = this.createProgressModal(this.lastProgress);
+        let progressModal = container.querySelector('#cs-progress-modal');
+        if (!progressModal) {
+          progressModal = this.createProgressModal(this.lastProgress);
           container.appendChild(progressModal);
         } else {
           this.updateProgressModal(this.lastProgress);
@@ -423,6 +427,7 @@ export class ShadowUIManager {
   private createConfirmModal(): HTMLElement {
     const overlay = document.createElement('div');
     overlay.className = 'cs-modal-overlay';
+    overlay.id = 'cs-confirm-modal';
 
     const selectedItems = this.selection.getSelectedItems(this.chats);
     const count = selectedItems.length;
@@ -569,6 +574,7 @@ export class ShadowUIManager {
   private createProgressModal(progress: QueueProgress): HTMLElement {
     const overlay = document.createElement('div');
     overlay.className = 'cs-modal-overlay';
+    overlay.id = 'cs-progress-modal';
 
     const card = document.createElement('div');
     card.className = 'cs-modal-card';
@@ -698,13 +704,18 @@ export class ShadowUIManager {
   }
 
   private updateProgressModal(progress: QueueProgress): void {
-    const overlay = this.shadow.querySelector<HTMLElement>('.cs-modal-overlay');
-    const fill = this.shadow.querySelector<HTMLElement>('#cs-progress-fill');
+    let overlay = this.shadow.querySelector<HTMLElement>('#cs-progress-modal');
+    let fill = this.shadow.querySelector<HTMLElement>('#cs-progress-fill');
     if (!overlay || !fill) {
-      this.currentModal = 'progress';
-      this.render();
-      return;
+      const container = this.shadow.getElementById('cs-container');
+      if (container) {
+        container.querySelectorAll('.cs-modal-overlay').forEach((el) => el.remove());
+        overlay = this.createProgressModal(progress);
+        container.appendChild(overlay);
+        fill = overlay.querySelector<HTMLElement>('#cs-progress-fill');
+      }
     }
+    if (!fill) return;
 
     const percentage =
       progress.total > 0 ? Math.round((progress.processedCount / progress.total) * 100) : 0;
@@ -798,6 +809,10 @@ export class ShadowUIManager {
    * Start Deletion Queue Execution
    */
   private async startDeletionQueue(items: ChatItem[]): Promise<void> {
+    // 1. Immediately remove confirm modal overlay so screen transitions cleanly
+    this.shadow.querySelector('#cs-confirm-modal')?.remove();
+    this.shadow.querySelectorAll('.cs-modal-overlay:not(#cs-progress-modal)').forEach((el) => el.remove());
+
     this.currentModal = 'progress';
     this.lastProgress = {
       state: 'VALIDATING',
@@ -814,8 +829,8 @@ export class ShadowUIManager {
 
     const queueSettings = {
       ...this.settings,
-      minDelayMs: Math.min(this.settings.minDelayMs, 180),
-      maxDelayMs: Math.min(this.settings.maxDelayMs, 380),
+      minDelayMs: Math.min(this.settings.minDelayMs, 60),
+      maxDelayMs: Math.min(this.settings.maxDelayMs, 140),
       dryRunMode: this.dryRunActive,
     };
 

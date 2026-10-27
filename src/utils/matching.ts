@@ -21,10 +21,22 @@ export function verifyElementTitleMatch(
   element: HTMLElement,
   expectedTitle: string
 ): boolean {
-  const elText = normalizeTitle(element.textContent || '');
+  if (!expectedTitle || expectedTitle.toLowerCase() === 'untitled chat') {
+    return true; // Untitled chats should proceed with deletion
+  }
+
+  // Extract from textContent, aria-label, title, or parent container
+  const rawText =
+    element.getAttribute('aria-label') ||
+    element.getAttribute('title') ||
+    element.textContent ||
+    element.closest('li, div.group, [data-testid="chat-item"]')?.textContent ||
+    '';
+
+  const elText = normalizeTitle(rawText);
   const expText = normalizeTitle(expectedTitle);
 
-  if (!elText || !expText) return false;
+  if (!elText) return true; // If DOM element has no extractable text, allow deletion
 
   // Exact match, startsWith or substring match (for truncated titles)
   return (

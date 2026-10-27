@@ -156,7 +156,7 @@ export class PoeAdapter implements PlatformAdapter {
 
     try {
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await sleep(150);
+      await sleep(40);
 
       const menuTrigger = queryWithFallbacks<HTMLElement>(el, POE_SELECTORS.menuTrigger);
       if (!menuTrigger) {
@@ -172,9 +172,9 @@ export class PoeAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(menuTrigger);
-      await sleep(250);
+      await sleep(80);
 
-      const menu = await waitForElement<HTMLElement>(POE_SELECTORS.menuPopup, document, 2500);
+      const menu = await waitForElement<HTMLElement>(POE_SELECTORS.menuPopup, document, 1500);
       if (!menu) {
         return {
           chatId: chat.id,
@@ -203,9 +203,9 @@ export class PoeAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(deleteItem);
-      await sleep(350);
+      await sleep(90);
 
-      const dialog = await waitForElement<HTMLElement>(POE_SELECTORS.confirmDialog, document, 3000);
+      const dialog = await waitForElement<HTMLElement>(POE_SELECTORS.confirmDialog, document, 1500);
       if (!dialog) {
         return {
           chatId: chat.id,
@@ -235,6 +235,9 @@ export class PoeAdapter implements PlatformAdapter {
 
       await triggerHumanClick(confirmBtn);
       const verified = await this.verifyDeletion(chat);
+      if (verified && el) {
+        (el.closest('li, div.group') || el).remove();
+      }
 
       return {
         chatId: chat.id,
@@ -258,10 +261,16 @@ export class PoeAdapter implements PlatformAdapter {
   }
 
   public async verifyDeletion(chat: ChatItem): Promise<boolean> {
-    await sleep(600);
+    // 1. Immediate check: 0ms wait
     if (chat.elementRef && !document.body.contains(chat.elementRef)) return true;
     if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) return true;
-    return waitForElementToDisappear(`a[href*="${chat.id}"]`, 2000);
+    // 2. Poll in short intervals
+    for (let i = 0; i < 6; i++) {
+      await sleep(30);
+      if (chat.elementRef && !document.body.contains(chat.elementRef)) return true;
+      if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) return true;
+    }
+    return false;
   }
 
   private hashCode(str: string): number {

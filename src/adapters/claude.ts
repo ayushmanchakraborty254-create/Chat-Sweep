@@ -20,16 +20,18 @@ import { sleep } from '../utils/delays';
  */
 export const CLAUDE_SELECTORS = {
   chatItem: [
-    'a[href*="/chat/"]',
+    'li:has(a[href*="/chat/"])',
     'div[data-testid="chat-item"]',
     'nav div[role="button"]:has(a[href*="/chat/"])',
-    'li:has(a[href*="/chat/"])',
+    'div.group:has(a[href*="/chat/"])',
+    'a[href*="/chat/"]',
   ],
   title: [
     'div.truncate',
     'span.truncate',
     'p.truncate',
     'div[title]',
+    'span[title]',
     'a[href*="/chat/"] span',
   ],
   menuTrigger: [
@@ -93,6 +95,8 @@ export class ClaudeAdapter implements PlatformAdapter {
   };
 
   public readonly selectors = CLAUDE_SELECTORS;
+  private cachedChatTitles = new Map<string, string>();
+  private isFetchingTitles = false;
 
   public isLoggedIn(): boolean {
     const userElement = queryWithFallbacks(document, CLAUDE_SELECTORS.userMenu);
@@ -101,6 +105,11 @@ export class ClaudeAdapter implements PlatformAdapter {
   }
 
   public async getChatList(): Promise<ChatItem[]> {
+    // Optionally trigger background server title fetch
+    if (this.cachedChatTitles.size === 0 && !this.isFetchingTitles) {
+      this.fetchServerChatTitles().catch(() => {});
+    }
+
     const chatElements = queryAllWithFallbacks<HTMLElement>(
       document,
       CLAUDE_SELECTORS.chatItem
@@ -135,17 +144,109 @@ export class ClaudeAdapter implements PlatformAdapter {
       if (seenIds.has(id)) continue;
       seenIds.add(id);
 
-      // Title extraction
+      // Hierarchical Title Extraction to prevent "Untitled Chat"
       let title = '';
-      const titleEl = queryWithFallbacks(el, CLAUDE_SELECTORS.title);
-      if (titleEl) {
-        title = (titleEl.textContent || titleEl.getAttribute('title') || '').trim();
-      } else {
-        title = (el.textContent || 'Untitled Chat').trim();
+
+      // 1. Direct aria-label or title attributes on element or its anchor
+      const directAria = el.getAttribute('aria-label') || el.getAttribute('title');
+      if (
+        directAria &&
+        !directAria.toLowerCase().includes('option') &&
+        !directAria.toLowerCase().includes('menu') &&
+        directAria !== 'Chat'
+      ) {
+        title = directAria;
+      }
+
+      // 2. Query title selector within element
+      if (!title) {
+        const titleEl = queryWithFallbacks(el, CLAUDE_SELECTORS.title);
+        if (titleEl) {
+          title = (
+            titleEl.textContent ||
+            titleEl.getAttribute('title') ||
+            titleEl.getAttribute('aria-label') ||
+            ''
+          ).trim();
+        }
+      }
+
+      // 3. Search the enclosing row container (li, div.group, parent)
+      const container =
+        el.closest('li, div.group, [data-testid="chat-item"], div[role="button"]') ||
+        el.parentElement;
+
+      if ((!title || title === 'Untitled Chat') && container) {
+        const cAria = container.getAttribute('aria-label') || container.getAttribute('title');
+        if (
+          cAria &&
+          !cAria.toLowerCase().includes('option') &&
+          !cAria.toLowerCase().includes('menu') &&
+          cAria !== 'Chat'
+        ) {
+          title = cAria;
+        }
+
+        if (!title || title === 'Untitled Chat') {
+          const cTitleEl = queryWithFallbacks(container, CLAUDE_SELECTORS.title);
+          if (cTitleEl) {
+            title = (cTitleEl.textContent || cTitleEl.getAttribute('title') || '').trim();
+          }
+        }
+
+        if (!title || title === 'Untitled Chat') {
+          // Look for candidates inside container excluding action buttons
+          const candidates = Array.from(
+            container.querySelectorAll<HTMLElement>(
+              '[class*="truncate"], [class*="line-clamp"], div[title], span[title], p, span, div'
+            )
+          );
+          for (const cand of candidates) {
+            if (cand.closest('button, svg, .cs-checkbox-btn, [role="button"]')) continue;
+            const text = (cand.getAttribute('title') || cand.textContent || '').trim();
+            if (
+              text &&
+              text.length > 0 &&
+              text !== 'Untitled Chat' &&
+              !text.toLowerCase().includes('delete') &&
+              !text.toLowerCase().includes('rename') &&
+              !text.toLowerCase().includes('select') &&
+              !text.toLowerCase().includes('options') &&
+              !text.startsWith('Claude')
+            ) {
+              title = text;
+              break;
+            }
+          }
+        }
+
+        if (!title || title === 'Untitled Chat') {
+          // Clone container and strip buttons, svgs, scripts, checkboxes
+          try {
+            const clone = container.cloneNode(true) as HTMLElement;
+            clone
+              .querySelectorAll('button, svg, .cs-checkbox-btn, [role="button"], script, style')
+              .forEach((node) => node.remove());
+            const raw = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+            if (raw && raw !== 'Untitled Chat' && raw.length > 0) {
+              title = raw;
+            }
+          } catch {}
+        }
+      }
+
+      // 4. Check server cached titles
+      if ((!title || title === 'Untitled Chat') && id && this.cachedChatTitles.has(id)) {
+        title = this.cachedChatTitles.get(id)!;
+      }
+
+      // 5. Fallback to direct textContent
+      if (!title) {
+        title = (el.textContent || '').trim();
       }
 
       // Clean title from extra UI labels
-      title = title.replace(/\s+/g, ' ');
+      title = title.replace(/\s+/g, ' ').trim() || 'Untitled Chat';
 
       // Pinned check
       const isPinned =
@@ -155,7 +256,7 @@ export class ClaudeAdapter implements PlatformAdapter {
       chats.push({
         id,
         provider: 'claude',
-        title: title || 'Untitled Chat',
+        title,
         url: href ? (href.startsWith('http') ? href : `https://claude.ai${href}`) : undefined,
         elementRef: el,
         isPinned,
@@ -227,47 +328,37 @@ export class ClaudeAdapter implements PlatformAdapter {
     return true;
   }
 
+  public async fetchServerChatTitles(): Promise<void> {
+    if (this.isFetchingTitles) return;
+    this.isFetchingTitles = true;
+    try {
+      const orgId = await this.getClaudeOrgId();
+      if (!orgId) return;
+      const res = await fetch(`/api/organizations/${orgId}/chat_conversations`, {
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      });
+      if (res.ok) {
+        const list = await res.json();
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (item.uuid && item.name) {
+              this.cachedChatTitles.set(item.uuid, item.name);
+            }
+          }
+        }
+      }
+    } catch {} finally {
+      this.isFetchingTitles = false;
+    }
+  }
+
   private cachedOrgId: string | null = null;
 
   private async getClaudeOrgId(): Promise<string | null> {
     if (this.cachedOrgId) return this.cachedOrgId;
 
-    // 1. Check URL path
-    const urlMatch = location.pathname.match(/organizations\/([a-f0-9\-]{36})/i);
-    if (urlMatch && urlMatch[1]) {
-      this.cachedOrgId = urlMatch[1];
-      return urlMatch[1];
-    }
-
-    // 2. Check __NEXT_DATA__ script
-    try {
-      const nextDataEl = document.getElementById('__NEXT_DATA__');
-      if (nextDataEl?.textContent) {
-        const match =
-          nextDataEl.textContent.match(/"organization[_-]?uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
-          nextDataEl.textContent.match(/"org[_-]?id"\s*:\s*"([a-f0-9\-]{36})"/i) ||
-          nextDataEl.textContent.match(/"uuid"\s*:\s*"([a-f0-9\-]{36})"/i);
-        if (match && match[1]) {
-          this.cachedOrgId = match[1];
-          return match[1];
-        }
-      }
-    } catch {}
-
-    // 3. Check page HTML / scripts
-    try {
-      const htmlMatch =
-        document.documentElement.innerHTML.match(/api\/organizations\/([a-f0-9\-]{36})/i) ||
-        document.documentElement.innerHTML.match(/"organization":\s*\{\s*"uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
-        document.documentElement.innerHTML.match(/"organization_uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
-        document.documentElement.innerHTML.match(/organizations\/([a-f0-9\-]{36})/i);
-      if (htmlMatch && htmlMatch[1]) {
-        this.cachedOrgId = htmlMatch[1];
-        return htmlMatch[1];
-      }
-    } catch {}
-
-    // 4. Check cookies
+    // 1. Instant check: cookies (synchronous)
     try {
       const match = document.cookie.match(/lastActiveOrg=([a-zA-Z0-9_\-]+)/);
       if (match && match[1]) {
@@ -276,14 +367,23 @@ export class ClaudeAdapter implements PlatformAdapter {
       }
     } catch {}
 
-    // 5. Check localStorage & sessionStorage
+    // 2. Instant check: URL path
+    const urlMatch = location.pathname.match(/organizations\/([a-f0-9\-]{36})/i);
+    if (urlMatch && urlMatch[1]) {
+      this.cachedOrgId = urlMatch[1];
+      return urlMatch[1];
+    }
+
+    // 3. Instant check: localStorage & sessionStorage
     try {
       for (const storage of [localStorage, sessionStorage]) {
         for (let i = 0; i < storage.length; i++) {
           const key = storage.key(i) || '';
           const val = storage.getItem(key) || '';
           if (key.includes('org') || val.includes('organization') || val.includes('uuid')) {
-            const match = val.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+            const match = val.match(
+              /([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i
+            );
             if (match && match[1]) {
               this.cachedOrgId = match[1];
               return match[1];
@@ -293,24 +393,7 @@ export class ClaudeAdapter implements PlatformAdapter {
       }
     } catch {}
 
-    // 6. Fetch from /api/bootstrap
-    try {
-      const bootRes = await fetch('/api/bootstrap', { credentials: 'include' });
-      if (bootRes.ok) {
-        const bootData = await bootRes.json();
-        const orgId =
-          bootData.account?.memberships?.[0]?.organization?.uuid ||
-          bootData.account?.memberships?.[0]?.organization_uuid ||
-          bootData.statsigUser?.custom?.orgId ||
-          bootData.orgs?.[0]?.uuid;
-        if (orgId) {
-          this.cachedOrgId = orgId;
-          return orgId;
-        }
-      }
-    } catch {}
-
-    // 7. Fetch from /api/organizations
+    // 4. Official Claude API endpoint
     try {
       const res = await fetch('/api/organizations', { credentials: 'include' });
       if (res.ok) {
@@ -321,6 +404,21 @@ export class ClaudeAdapter implements PlatformAdapter {
             this.cachedOrgId = orgId;
             return orgId;
           }
+        }
+      }
+    } catch {}
+
+    // 5. Check __NEXT_DATA__
+    try {
+      const nextDataEl = document.getElementById('__NEXT_DATA__');
+      if (nextDataEl?.textContent) {
+        const match =
+          nextDataEl.textContent.match(/"organization[_-]?uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
+          nextDataEl.textContent.match(/"org[_-]?id"\s*:\s*"([a-f0-9\-]{36})"/i) ||
+          nextDataEl.textContent.match(/"uuid"\s*:\s*"([a-f0-9\-]{36})"/i);
+        if (match && match[1]) {
+          this.cachedOrgId = match[1];
+          return match[1];
         }
       }
     } catch {}
@@ -338,10 +436,11 @@ export class ClaudeAdapter implements PlatformAdapter {
         credentials: 'include',
         headers: {
           'Content-Type': 'application/json',
+          Accept: 'application/json',
         },
       });
 
-      if (res.ok || res.status === 204 || res.status === 200) {
+      if (res.ok || res.status === 204 || res.status === 200 || res.status === 404) {
         return true;
       }
       return false;
@@ -365,7 +464,7 @@ export class ClaudeAdapter implements PlatformAdapter {
       el = anchors.find((a) => (a.textContent || '').trim().includes(chat.title)) || null;
     }
 
-    // 1. PRIMARY STRATEGY: Direct API deletion (Permanent in real life, instant, no UI flakiness)
+    // 1. PRIMARY STRATEGY: Direct API deletion (instant, permanent, no UI flakiness)
     if (chat.id && !chat.id.startsWith('claude_')) {
       const apiSuccess = await this.deleteViaClaudeApi(chat.id);
       if (apiSuccess) {
@@ -384,7 +483,7 @@ export class ClaudeAdapter implements PlatformAdapter {
       }
     }
 
-    // 2. FALLBACK STRATEGY: Enhanced DOM Automation with Radix PointerEvent support
+    // 2. FALLBACK STRATEGY: High-speed DOM Automation
     if (!el) {
       return {
         chatId: chat.id,
@@ -418,7 +517,7 @@ export class ClaudeAdapter implements PlatformAdapter {
           row.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true }));
         } catch {}
       });
-      await sleep(150);
+      await sleep(40);
 
       // Find menu trigger button
       const candidateButtons = Array.from(
@@ -464,13 +563,13 @@ export class ClaudeAdapter implements PlatformAdapter {
         } catch {}
       });
       if (typeof menuTrigger.click === 'function') menuTrigger.click();
-      await sleep(350);
+      await sleep(80);
 
       // Wait for Menu Popup
       const menu = await waitForElement<HTMLElement>(
         ['div[role="menu"]', '[data-radix-popper-content-wrapper]', 'div[data-state="open"]'],
         document,
-        2500
+        1500
       );
 
       // Find Delete in menu
@@ -513,13 +612,13 @@ export class ClaudeAdapter implements PlatformAdapter {
         } catch {}
       });
       if (typeof deleteItem.click === 'function') deleteItem.click();
-      await sleep(350);
+      await sleep(90);
 
       // Wait for confirmation dialog
       const dialog = await waitForElement<HTMLElement>(
         ['div[role="dialog"]', 'div[role="alertdialog"]', 'div[data-state="open"]'],
         document,
-        3000
+        1500
       );
 
       if (dialog) {
@@ -551,7 +650,7 @@ export class ClaudeAdapter implements PlatformAdapter {
         }
       }
 
-      // Verify deletion
+      // Fast verification of deletion
       const verified = await this.verifyDeletion(chat);
       if (verified && el) {
         const row = el.closest('li, div.group, div[role="button"]') || el;
@@ -580,17 +679,24 @@ export class ClaudeAdapter implements PlatformAdapter {
   }
 
   public async verifyDeletion(chat: ChatItem): Promise<boolean> {
-    await sleep(600);
-    // 1. Check if original element is gone
+    // 1. Immediate check: 0ms wait if element was already removed from DOM
     if (chat.elementRef && !document.body.contains(chat.elementRef)) {
       return true;
     }
-    // 2. Check if anchor by href is gone
     if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
       return true;
     }
-    // 3. Wait up to 2 seconds for DOM removal
-    return waitForElementToDisappear(`a[href*="${chat.id}"]`, 2000);
+    // 2. Poll in short intervals
+    for (let i = 0; i < 6; i++) {
+      await sleep(30);
+      if (chat.elementRef && !document.body.contains(chat.elementRef)) {
+        return true;
+      }
+      if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private hashCode(str: string): number {
