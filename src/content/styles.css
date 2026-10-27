@@ -1,0 +1,397 @@
+/* Scoped CSS for ChatSweep Shadow DOM */
+:host {
+  --cs-primary: #10b981;
+  --cs-primary-hover: #059669;
+  --cs-danger: #ef4444;
+  --cs-danger-hover: #dc2626;
+  --cs-bg: #ffffff;
+  --cs-bg-subtle: #f8fafc;
+  --cs-border: #e2e8f0;
+  --cs-text: #0f172a;
+  --cs-text-muted: #64748b;
+  --cs-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1);
+  --cs-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-family: var(--cs-font);
+  font-size: 14px;
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+
+:host(.dark), :host-context(.dark), :host([data-theme="dark"]) {
+  --cs-bg: #1e293b;
+  --cs-bg-subtle: #0f172a;
+  --cs-border: #334155;
+  --cs-text: #f8fafc;
+  --cs-text-muted: #94a3b8;
+  --cs-shadow: 0 10px 30px -5px rgba(0, 0, 0, 0.5);
+}
+
+/* Floating Trigger Button */
+.cs-floating-trigger {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  background: var(--cs-primary);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 13px;
+  border: none;
+  border-radius: 9999px;
+  box-shadow: 0 4px 14px rgba(16, 185, 129, 0.4);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  user-select: none;
+}
+
+.cs-floating-trigger:hover {
+  background: var(--cs-primary-hover);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+}
+
+.cs-floating-trigger.active {
+  background: #334155;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.cs-floating-trigger svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* Sticky Action Bar */
+.cs-action-bar {
+  position: fixed;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2147483646;
+  background: var(--cs-bg);
+  border: 1px solid var(--cs-border);
+  border-radius: 16px;
+  padding: 12px 20px;
+  box-shadow: var(--cs-shadow);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  color: var(--cs-text);
+  animation: csSlideUp 0.25s ease-out;
+  max-width: 90vw;
+  flex-wrap: wrap;
+}
+
+@keyframes csSlideUp {
+  from { opacity: 0; transform: translate(-50%, 20px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+
+.cs-bar-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 700;
+}
+
+.cs-badge {
+  background: #dcfce7;
+  color: #15803d;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 12px;
+}
+
+.dark .cs-badge {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+.cs-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.cs-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 500;
+  border-radius: 8px;
+  border: 1px solid var(--cs-border);
+  background: var(--cs-bg-subtle);
+  color: var(--cs-text);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.cs-btn:hover {
+  background: var(--cs-border);
+}
+
+.cs-btn-primary {
+  background: var(--cs-primary);
+  color: #ffffff;
+  border-color: var(--cs-primary);
+}
+
+.cs-btn-primary:hover {
+  background: var(--cs-primary-hover);
+}
+
+.cs-btn-danger {
+  background: var(--cs-danger);
+  color: #ffffff;
+  border-color: var(--cs-danger);
+}
+
+.cs-btn-danger:hover {
+  background: var(--cs-danger-hover);
+}
+
+.cs-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Search input */
+.cs-search-input {
+  padding: 6px 10px;
+  font-size: 13px;
+  border-radius: 8px;
+  border: 1px solid var(--cs-border);
+  background: var(--cs-bg);
+  color: var(--cs-text);
+  outline: none;
+  width: 150px;
+  transition: width 0.2s ease, border-color 0.2s ease;
+}
+
+.cs-search-input:focus {
+  width: 190px;
+  border-color: var(--cs-primary);
+}
+
+/* Modals Overlay */
+.cs-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+  z-index: 2147483647;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: csFadeIn 0.2s ease-out;
+}
+
+@keyframes csFadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.cs-modal-card {
+  background: var(--cs-bg);
+  border: 1px solid var(--cs-border);
+  border-radius: 16px;
+  width: 520px;
+  max-width: 92vw;
+  max-height: 85vh;
+  overflow-y: auto;
+  box-shadow: var(--cs-shadow);
+  color: var(--cs-text);
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  animation: csScaleUp 0.2s ease-out;
+}
+
+@keyframes csScaleUp {
+  from { opacity: 0; transform: scale(0.95); }
+  to { opacity: 1; transform: scale(1); }
+}
+
+.cs-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.cs-modal-title {
+  font-size: 18px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cs-warning-box {
+  background: #fef2f2;
+  border: 1px solid #fee2e2;
+  border-radius: 10px;
+  padding: 12px;
+  color: #991b1b;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dark .cs-warning-box {
+  background: #450a0a;
+  border-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.cs-chat-preview-list {
+  background: var(--cs-bg-subtle);
+  border: 1px solid var(--cs-border);
+  border-radius: 8px;
+  max-height: 160px;
+  overflow-y: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cs-chat-preview-item {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--cs-bg);
+  border-radius: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cs-confirm-input {
+  width: 100%;
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--cs-border);
+  background: var(--cs-bg);
+  color: var(--cs-text);
+  font-weight: 600;
+  box-sizing: border-box;
+}
+
+.cs-confirm-input:focus {
+  border-color: var(--cs-danger);
+  outline: none;
+}
+
+/* Progress bar */
+.cs-progress-track {
+  width: 100%;
+  height: 10px;
+  background: var(--cs-border);
+  border-radius: 9999px;
+  overflow: hidden;
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.15);
+}
+
+.cs-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #10b981, #059669);
+  border-radius: 9999px;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.cs-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  text-align: center;
+}
+
+.cs-stat-card {
+  background: var(--cs-bg-subtle);
+  border: 1px solid var(--cs-border);
+  border-radius: 8px;
+  padding: 8px;
+}
+
+.cs-stat-value {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.cs-stat-label {
+  font-size: 11px;
+  color: var(--cs-text-muted);
+}
+
+/* Toast */
+.cs-toast {
+  position: fixed;
+  top: 24px;
+  right: 24px;
+  z-index: 2147483647;
+  padding: 12px 18px;
+  background: var(--cs-bg);
+  border: 1px solid var(--cs-border);
+  border-radius: 12px;
+  box-shadow: var(--cs-shadow);
+  color: var(--cs-text);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  animation: csSlideDown 0.2s ease-out;
+}
+
+@keyframes csSlideDown {
+  from { opacity: 0; transform: translateY(-10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Sidebar Injected Checkbox Overlay */
+.cs-chat-checkbox-wrapper {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-right: 8px;
+  z-index: 10;
+  cursor: pointer;
+}
+
+.cs-checkbox-custom {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  border: 2px solid #94a3b8;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.15s ease;
+}
+
+.dark .cs-checkbox-custom {
+  background: #1e293b;
+  border-color: #64748b;
+}
+
+.cs-checkbox-custom.checked {
+  background: var(--cs-primary);
+  border-color: var(--cs-primary);
+}
+
+.cs-checkbox-custom.checked::after {
+  content: '';
+  width: 4px;
+  height: 8px;
+  border: solid white;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+  margin-bottom: 2px;
+}

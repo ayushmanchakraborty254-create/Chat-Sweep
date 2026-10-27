@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#10b981" />
+      <stop offset="100%" stop-color="#059669" />
+    </linearGradient>
+    <linearGradient id="sparkle" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fef08a" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <!-- Background rounded squircle -->
+  <rect x="8" y="8" width="112" height="112" rx="28" fill="url(#grad)" />
+  <!-- Chat bubble outline -->
+  <path d="M34 38 C34 32.4 38.4 28 44 28 L84 28 C89.6 28 94 32.4 94 38 L94 72 C94 77.6 89.6 82 84 82 L52 82 L38 94 L40 82 L44 82 C38.4 82 34 77.6 34 72 Z" fill="#ffffff" opacity="0.95" />
+  <!-- Broom sweep strokes / sparkles -->
+  <path d="M50 48 L78 48" stroke="#059669" stroke-width="5" stroke-linecap="round" />
+  <path d="M50 60 L72 60" stroke="#059669" stroke-width="5" stroke-linecap="round" />
+  <path d="M50 72 L64 72" stroke="#059669" stroke-width="5" stroke-linecap="round" />
+  <!-- Magic sparkle top-right -->
+  <polygon points="96,24 99,32 107,35 99,38 96,46 93,38 85,35 93,32" fill="url(#sparkle)" />
+</svg>

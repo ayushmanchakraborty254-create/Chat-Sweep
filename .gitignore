@@ -1,0 +1,27 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.js
+
+# Production build output
+# (Keep dist/ tracked if you want the extension loadable directly from repo or unpack, or ignore it. For Chrome extension repos, dist is often committed so users can download and load unpacked without building, but usually .gitignore has dist/ and releases have zip. Let's keep dist ignored or tracked based on standard practice. Let's include dist/ in .gitignore and keep dist built locally.)
+# Actually, users loading unpacked from GitHub often appreciate dist or release zips, but standard git repo should ignore node_modules.
+
+# Testing & Coverage
+coverage/
+
+# Misc
+.DS_Store
+*.pem
+
+# Debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Local env files
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local

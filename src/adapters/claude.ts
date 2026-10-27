@@ -1,0 +1,604 @@
+import {
+  AdapterCapabilities,
+  ChatItem,
+  DeleteResult,
+  PlatformAdapter,
+  ProviderId,
+} from '../types';
+import {
+  queryWithFallbacks,
+  queryAllWithFallbacks,
+  triggerHumanClick,
+  waitForElement,
+  waitForElementToDisappear,
+  findElementWithText,
+} from '../utils/dom';
+import { sleep } from '../utils/delays';
+
+/**
+ * Selectors centralized with resilient fallbacks for Claude.ai
+ */
+export const CLAUDE_SELECTORS = {
+  chatItem: [
+    'a[href*="/chat/"]',
+    'div[data-testid="chat-item"]',
+    'nav div[role="button"]:has(a[href*="/chat/"])',
+    'li:has(a[href*="/chat/"])',
+  ],
+  title: [
+    'div.truncate',
+    'span.truncate',
+    'p.truncate',
+    'div[title]',
+    'a[href*="/chat/"] span',
+  ],
+  menuTrigger: [
+    'button[aria-label*="Chat options"]',
+    'button[aria-label*="options" i]',
+    'button[data-testid="chat-menu-trigger"]',
+    'button[data-testid="overflow-menu-trigger"]',
+    'button:has(svg.lucide-more-horizontal)',
+    'button:has(svg.lucide-ellipsis)',
+    'button:has(svg[aria-label*="More" i])',
+  ],
+  menuPopup: [
+    'div[role="menu"]',
+    'div[data-radix-popper-content-wrapper]',
+    'div.radix-dropdown-content',
+    'div[data-testid="chat-menu-content"]',
+  ],
+  deleteMenuItem: [
+    'div[role="menuitem"]:has-text("Delete")',
+    'button[role="menuitem"]:has-text("Delete")',
+    'div[data-testid="delete-chat"]',
+    '[role="menuitem"]',
+  ],
+  confirmDialog: [
+    'div[role="dialog"]',
+    'div[role="alertdialog"]',
+    'div[data-testid="confirm-dialog"]',
+  ],
+  confirmDeleteButton: [
+    'button[data-testid="confirm-delete"]',
+    'button.bg-danger',
+    'button.bg-red-500',
+    'div[role="dialog"] button',
+  ],
+  scrollContainer: [
+    'nav[aria-label*="history" i]',
+    'nav[aria-label*="Recent chats" i]',
+    'nav div.overflow-y-auto',
+    'nav',
+  ],
+  userMenu: [
+    'button[aria-label*="User menu" i]',
+    'button[data-testid="user-menu"]',
+    'button[aria-haspopup="menu"]',
+    'a[href="/settings"]',
+  ],
+};
+
+export class ClaudeAdapter implements PlatformAdapter {
+  public readonly id: ProviderId = 'claude';
+  public readonly name = 'Claude';
+  public readonly matches = ['claude.ai'];
+  public readonly isExperimental = false;
+
+  public readonly capabilities: AdapterCapabilities = {
+    bulkSelect: true,
+    individualDelete: true,
+    nativeBulkDelete: false,
+    exportMetadata: true,
+    guidedMode: false,
+  };
+
+  public readonly selectors = CLAUDE_SELECTORS;
+
+  public isLoggedIn(): boolean {
+    const userElement = queryWithFallbacks(document, CLAUDE_SELECTORS.userMenu);
+    const nav = queryWithFallbacks(document, CLAUDE_SELECTORS.scrollContainer);
+    return !!(userElement || nav || document.cookie.includes('sessionKey'));
+  }
+
+  public async getChatList(): Promise<ChatItem[]> {
+    const chatElements = queryAllWithFallbacks<HTMLElement>(
+      document,
+      CLAUDE_SELECTORS.chatItem
+    );
+
+    const chats: ChatItem[] = [];
+    const seenIds = new Set<string>();
+
+    for (const el of chatElements) {
+      let href = el.getAttribute('href');
+      if (!href) {
+        const linkChild = el.querySelector<HTMLAnchorElement>('a[href*="/chat/"]');
+        if (linkChild) href = linkChild.getAttribute('href');
+      }
+
+      let id = '';
+      if (href) {
+        const match = href.match(/\/chat\/([a-zA-Z0-9\-]+)/);
+        if (match) id = match[1];
+      }
+
+      if (!id) {
+        id = el.getAttribute('data-chat-id') || el.getAttribute('id') || '';
+      }
+
+      if (!id) {
+        // Fallback to text hash if no explicit ID
+        const text = el.textContent || '';
+        id = 'claude_' + Math.abs(this.hashCode(text));
+      }
+
+      if (seenIds.has(id)) continue;
+      seenIds.add(id);
+
+      // Title extraction
+      let title = '';
+      const titleEl = queryWithFallbacks(el, CLAUDE_SELECTORS.title);
+      if (titleEl) {
+        title = (titleEl.textContent || titleEl.getAttribute('title') || '').trim();
+      } else {
+        title = (el.textContent || 'Untitled Chat').trim();
+      }
+
+      // Clean title from extra UI labels
+      title = title.replace(/\s+/g, ' ');
+
+      // Pinned check
+      const isPinned =
+        el.closest('[data-testid="pinned-chats"]') !== null ||
+        el.querySelector('[data-testid="pin-icon"]') !== null;
+
+      chats.push({
+        id,
+        provider: 'claude',
+        title: title || 'Untitled Chat',
+        url: href ? (href.startsWith('http') ? href : `https://claude.ai${href}`) : undefined,
+        elementRef: el,
+        isPinned,
+      });
+    }
+
+    return chats;
+  }
+
+  public observeChatList(callback: () => void): () => void {
+    const target =
+      queryWithFallbacks(document, CLAUDE_SELECTORS.scrollContainer) || document.body;
+    const observer = new MutationObserver((mutations) => {
+      const isOnlyChatSweep = mutations.every((m) => {
+        const targetEl = m.target as HTMLElement | null;
+        if (!targetEl) return false;
+        return (
+          targetEl.tagName?.toLowerCase() === 'chatsweep-root' ||
+          targetEl.classList?.contains('cs-checkbox-btn') ||
+          targetEl.classList?.contains('cs-has-checkbox') ||
+          targetEl.classList?.contains('cs-row-selected') ||
+          targetEl.id === 'chatsweep-injected-host-styles' ||
+          Boolean(targetEl.closest?.('#chatsweep-shadow-host'))
+        );
+      });
+      if (!isOnlyChatSweep) {
+        callback();
+      }
+    });
+
+    observer.observe(target, { childList: true, subtree: true });
+    return () => observer.disconnect();
+  }
+
+  public async loadMoreChats(onProgress?: (count: number) => void): Promise<boolean> {
+    const container = queryWithFallbacks<HTMLElement>(
+      document,
+      CLAUDE_SELECTORS.scrollContainer
+    );
+    if (!container) return false;
+
+    let previousHeight = 0;
+    let attemptsWithoutNewChats = 0;
+
+    for (let i = 0; i < 25; i++) {
+      const initialChats = (await this.getChatList()).length;
+      onProgress?.(initialChats);
+
+      container.scrollTop = container.scrollHeight;
+      await sleep(700);
+
+      const currentChats = (await this.getChatList()).length;
+      const currentHeight = container.scrollHeight;
+
+      if (currentChats === initialChats && currentHeight === previousHeight) {
+        attemptsWithoutNewChats++;
+        if (attemptsWithoutNewChats >= 3) {
+          break; // Fully loaded
+        }
+      } else {
+        attemptsWithoutNewChats = 0;
+      }
+
+      previousHeight = currentHeight;
+    }
+
+    const finalCount = (await this.getChatList()).length;
+    onProgress?.(finalCount);
+    return true;
+  }
+
+  private cachedOrgId: string | null = null;
+
+  private async getClaudeOrgId(): Promise<string | null> {
+    if (this.cachedOrgId) return this.cachedOrgId;
+
+    // 1. Check URL path
+    const urlMatch = location.pathname.match(/organizations\/([a-f0-9\-]{36})/i);
+    if (urlMatch && urlMatch[1]) {
+      this.cachedOrgId = urlMatch[1];
+      return urlMatch[1];
+    }
+
+    // 2. Check __NEXT_DATA__ script
+    try {
+      const nextDataEl = document.getElementById('__NEXT_DATA__');
+      if (nextDataEl?.textContent) {
+        const match =
+          nextDataEl.textContent.match(/"organization[_-]?uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
+          nextDataEl.textContent.match(/"org[_-]?id"\s*:\s*"([a-f0-9\-]{36})"/i) ||
+          nextDataEl.textContent.match(/"uuid"\s*:\s*"([a-f0-9\-]{36})"/i);
+        if (match && match[1]) {
+          this.cachedOrgId = match[1];
+          return match[1];
+        }
+      }
+    } catch {}
+
+    // 3. Check page HTML / scripts
+    try {
+      const htmlMatch =
+        document.documentElement.innerHTML.match(/api\/organizations\/([a-f0-9\-]{36})/i) ||
+        document.documentElement.innerHTML.match(/"organization":\s*\{\s*"uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
+        document.documentElement.innerHTML.match(/"organization_uuid"\s*:\s*"([a-f0-9\-]{36})"/i) ||
+        document.documentElement.innerHTML.match(/organizations\/([a-f0-9\-]{36})/i);
+      if (htmlMatch && htmlMatch[1]) {
+        this.cachedOrgId = htmlMatch[1];
+        return htmlMatch[1];
+      }
+    } catch {}
+
+    // 4. Check cookies
+    try {
+      const match = document.cookie.match(/lastActiveOrg=([a-zA-Z0-9_\-]+)/);
+      if (match && match[1]) {
+        this.cachedOrgId = match[1];
+        return match[1];
+      }
+    } catch {}
+
+    // 5. Check localStorage & sessionStorage
+    try {
+      for (const storage of [localStorage, sessionStorage]) {
+        for (let i = 0; i < storage.length; i++) {
+          const key = storage.key(i) || '';
+          const val = storage.getItem(key) || '';
+          if (key.includes('org') || val.includes('organization') || val.includes('uuid')) {
+            const match = val.match(/([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})/i);
+            if (match && match[1]) {
+              this.cachedOrgId = match[1];
+              return match[1];
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 6. Fetch from /api/bootstrap
+    try {
+      const bootRes = await fetch('/api/bootstrap', { credentials: 'include' });
+      if (bootRes.ok) {
+        const bootData = await bootRes.json();
+        const orgId =
+          bootData.account?.memberships?.[0]?.organization?.uuid ||
+          bootData.account?.memberships?.[0]?.organization_uuid ||
+          bootData.statsigUser?.custom?.orgId ||
+          bootData.orgs?.[0]?.uuid;
+        if (orgId) {
+          this.cachedOrgId = orgId;
+          return orgId;
+        }
+      }
+    } catch {}
+
+    // 7. Fetch from /api/organizations
+    try {
+      const res = await fetch('/api/organizations', { credentials: 'include' });
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data) && data.length > 0) {
+          const orgId = data[0].uuid || data[0].id;
+          if (orgId) {
+            this.cachedOrgId = orgId;
+            return orgId;
+          }
+        }
+      }
+    } catch {}
+
+    return null;
+  }
+
+  private async deleteViaClaudeApi(chatId: string): Promise<boolean> {
+    try {
+      const orgId = await this.getClaudeOrgId();
+      if (!orgId) return false;
+
+      const res = await fetch(`/api/organizations/${orgId}/chat_conversations/${chatId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (res.ok || res.status === 204 || res.status === 200) {
+        return true;
+      }
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
+  public async deleteChat(chat: ChatItem): Promise<DeleteResult> {
+    // Locate the DOM element
+    let el = chat.elementRef;
+    if (!el || !document.body.contains(el)) {
+      try {
+        el = document.querySelector(`a[href*="${CSS.escape(chat.id)}"]`) as HTMLElement;
+      } catch {}
+    }
+    if (!el) {
+      const anchors = Array.from(
+        document.querySelectorAll<HTMLElement>('nav a, a[href*="/chat/"], li a')
+      );
+      el = anchors.find((a) => (a.textContent || '').trim().includes(chat.title)) || null;
+    }
+
+    // 1. PRIMARY STRATEGY: Direct API deletion (Permanent in real life, instant, no UI flakiness)
+    if (chat.id && !chat.id.startsWith('claude_')) {
+      const apiSuccess = await this.deleteViaClaudeApi(chat.id);
+      if (apiSuccess) {
+        if (el) {
+          const row = el.closest('li, div.group, div[role="button"]') || el;
+          row.remove();
+        }
+        return {
+          chatId: chat.id,
+          provider: 'claude',
+          title: chat.title,
+          success: true,
+          status: 'deleted',
+          timestamp: Date.now(),
+        };
+      }
+    }
+
+    // 2. FALLBACK STRATEGY: Enhanced DOM Automation with Radix PointerEvent support
+    if (!el) {
+      return {
+        chatId: chat.id,
+        provider: 'claude',
+        title: chat.title,
+        success: false,
+        status: 'failed',
+        error: 'Chat element was not found in the sidebar.',
+        timestamp: Date.now(),
+      };
+    }
+
+    try {
+      // Find row container
+      let row: HTMLElement = el;
+      for (let i = 0; i < 4; i++) {
+        if (!row.parentElement || row.parentElement.tagName === 'NAV') break;
+        row = row.parentElement;
+        if (row.querySelector('button:not(.cs-checkbox-btn)')) break;
+      }
+
+      // Hover element to trigger React hover state
+      row.scrollIntoView({ block: 'nearest' });
+      ['pointerenter', 'pointerover', 'mouseenter', 'mouseover'].forEach((ev) => {
+        try {
+          row.dispatchEvent(
+            new PointerEvent(ev, { bubbles: true, cancelable: true, pointerType: 'mouse' })
+          );
+        } catch {}
+        try {
+          row.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true }));
+        } catch {}
+      });
+      await sleep(150);
+
+      // Find menu trigger button
+      const candidateButtons = Array.from(
+        row.querySelectorAll<HTMLElement>('button:not(.cs-checkbox-btn)')
+      );
+      let menuTrigger =
+        candidateButtons.find((b) => {
+          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+          const popup = b.getAttribute('aria-haspopup');
+          return (
+            popup === 'menu' ||
+            aria.includes('option') ||
+            aria.includes('more') ||
+            aria.includes('menu') ||
+            b.querySelector('svg') !== null
+          );
+        }) ||
+        candidateButtons[0] ||
+        null;
+
+      if (!menuTrigger) {
+        return {
+          chatId: chat.id,
+          provider: 'claude',
+          title: chat.title,
+          success: false,
+          status: 'failed',
+          error: 'Could not find Claude chat options menu trigger button.',
+          timestamp: Date.now(),
+        };
+      }
+
+      // Click menu trigger button
+      menuTrigger.focus();
+      ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach((ev) => {
+        try {
+          menuTrigger.dispatchEvent(
+            new PointerEvent(ev, { bubbles: true, cancelable: true, pointerType: 'mouse' })
+          );
+        } catch {}
+        try {
+          menuTrigger.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true }));
+        } catch {}
+      });
+      if (typeof menuTrigger.click === 'function') menuTrigger.click();
+      await sleep(350);
+
+      // Wait for Menu Popup
+      const menu = await waitForElement<HTMLElement>(
+        ['div[role="menu"]', '[data-radix-popper-content-wrapper]', 'div[data-state="open"]'],
+        document,
+        2500
+      );
+
+      // Find Delete in menu
+      const allMenuElements = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          '[role="menuitem"], div[role="menu"] *, [data-radix-popper-content-wrapper] *'
+        )
+      );
+      const deleteItem = allMenuElements.find((item) => {
+        const text = (item.textContent || '').trim().toLowerCase();
+        return (
+          text === 'delete' ||
+          text.includes('delete chat') ||
+          text.includes('delete conversation') ||
+          text.startsWith('delete')
+        );
+      });
+
+      if (!deleteItem) {
+        return {
+          chatId: chat.id,
+          provider: 'claude',
+          title: chat.title,
+          success: false,
+          status: 'failed',
+          error: 'Could not find "Delete" option in menu.',
+          timestamp: Date.now(),
+        };
+      }
+
+      deleteItem.focus();
+      ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach((ev) => {
+        try {
+          deleteItem.dispatchEvent(
+            new PointerEvent(ev, { bubbles: true, cancelable: true, pointerType: 'mouse' })
+          );
+        } catch {}
+        try {
+          deleteItem.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true }));
+        } catch {}
+      });
+      if (typeof deleteItem.click === 'function') deleteItem.click();
+      await sleep(350);
+
+      // Wait for confirmation dialog
+      const dialog = await waitForElement<HTMLElement>(
+        ['div[role="dialog"]', 'div[role="alertdialog"]', 'div[data-state="open"]'],
+        document,
+        3000
+      );
+
+      if (dialog) {
+        const dialogButtons = Array.from(dialog.querySelectorAll<HTMLElement>('button'));
+        const confirmBtn =
+          dialogButtons.find((b) => {
+            const text = (b.textContent || '').trim().toLowerCase();
+            return (
+              text === 'delete' ||
+              text.includes('delete') ||
+              b.classList.contains('bg-danger') ||
+              b.classList.contains('bg-red-500')
+            );
+          }) || dialogButtons[dialogButtons.length - 1];
+
+        if (confirmBtn) {
+          confirmBtn.focus();
+          ['pointerdown', 'mousedown', 'pointerup', 'mouseup'].forEach((ev) => {
+            try {
+              confirmBtn.dispatchEvent(
+                new PointerEvent(ev, { bubbles: true, cancelable: true, pointerType: 'mouse' })
+              );
+            } catch {}
+            try {
+              confirmBtn.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true }));
+            } catch {}
+          });
+          if (typeof confirmBtn.click === 'function') confirmBtn.click();
+        }
+      }
+
+      // Verify deletion
+      const verified = await this.verifyDeletion(chat);
+      if (verified && el) {
+        const row = el.closest('li, div.group, div[role="button"]') || el;
+        row.remove();
+      }
+
+      return {
+        chatId: chat.id,
+        provider: 'claude',
+        title: chat.title,
+        success: verified,
+        status: verified ? 'deleted' : 'unverified',
+        timestamp: Date.now(),
+      };
+    } catch (err: any) {
+      return {
+        chatId: chat.id,
+        provider: 'claude',
+        title: chat.title,
+        success: false,
+        status: 'failed',
+        error: err?.message || 'Error occurred during deletion automation.',
+        timestamp: Date.now(),
+      };
+    }
+  }
+
+  public async verifyDeletion(chat: ChatItem): Promise<boolean> {
+    await sleep(600);
+    // 1. Check if original element is gone
+    if (chat.elementRef && !document.body.contains(chat.elementRef)) {
+      return true;
+    }
+    // 2. Check if anchor by href is gone
+    if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
+      return true;
+    }
+    // 3. Wait up to 2 seconds for DOM removal
+    return waitForElementToDisappear(`a[href*="${chat.id}"]`, 2000);
+  }
+
+  private hashCode(str: string): number {
+    let hash = 0;
+    for (let i = 0; i < str.length; i++) {
+      hash = (hash << 5) - hash + str.charCodeAt(i);
+      hash |= 0;
+    }
+    return hash;
+  }
+}
