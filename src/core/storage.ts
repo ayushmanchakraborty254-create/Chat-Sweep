@@ -1,8 +1,8 @@
 import { ActivityLogEntry, ProviderId, Settings, ChatItem } from '../types';
 
 export const DEFAULT_SETTINGS: Settings = {
-  minDelayMs: 60,
-  maxDelayMs: 140,
+  minDelayMs: 15,
+  maxDelayMs: 35,
   maxRetries: 3,
   requireDeleteConfirmationText: true,
   confirmationTextThreshold: 10,

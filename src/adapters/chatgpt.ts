@@ -87,6 +87,7 @@ export class ChatGPTAdapter implements PlatformAdapter {
     nativeBulkDelete: false,
     exportMetadata: true,
     guidedMode: false,
+    supportsFastApi: true,
   };
 
   public readonly selectors = CHATGPT_SELECTORS;
@@ -286,7 +287,7 @@ export class ChatGPTAdapter implements PlatformAdapter {
       // Step 1: Fast hover
       el.dispatchEvent(new MouseEvent('pointerenter', { bubbles: true }));
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await sleep(40);
+      await sleep(15);
 
       // Step 2: Locate menu trigger button
       let menuTrigger = queryWithFallbacks<HTMLElement>(el, CHATGPT_SELECTORS.menuTrigger);
@@ -313,13 +314,13 @@ export class ChatGPTAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(menuTrigger);
-      await sleep(80);
+      await sleep(25);
 
       // Step 3: Wait for popup menu
       const menu = await waitForElement<HTMLElement>(
         CHATGPT_SELECTORS.menuPopup,
         document,
-        1500
+        1000
       );
       if (!menu) {
         return {
@@ -352,13 +353,13 @@ export class ChatGPTAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(deleteItem);
-      await sleep(90);
+      await sleep(25);
 
       // Step 5: Wait for confirm dialog
       const dialog = await waitForElement<HTMLElement>(
         CHATGPT_SELECTORS.confirmDialog,
         document,
-        1500
+        1000
       );
       if (!dialog) {
         return {
@@ -431,9 +432,9 @@ export class ChatGPTAdapter implements PlatformAdapter {
     if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
       return true;
     }
-    // 2. Poll in short intervals
-    for (let i = 0; i < 6; i++) {
-      await sleep(30);
+    // 2. Poll in ultra-short intervals (max 40ms)
+    for (let i = 0; i < 2; i++) {
+      await sleep(20);
       if (chat.elementRef && !document.body.contains(chat.elementRef)) {
         return true;
       }

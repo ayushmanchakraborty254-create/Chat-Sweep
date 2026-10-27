@@ -92,6 +92,7 @@ export class ClaudeAdapter implements PlatformAdapter {
     nativeBulkDelete: false,
     exportMetadata: true,
     guidedMode: false,
+    supportsFastApi: true,
   };
 
   public readonly selectors = CLAUDE_SELECTORS;
@@ -517,7 +518,7 @@ export class ClaudeAdapter implements PlatformAdapter {
           row.dispatchEvent(new MouseEvent(ev, { bubbles: true, cancelable: true }));
         } catch {}
       });
-      await sleep(40);
+      await sleep(15);
 
       // Find menu trigger button
       const candidateButtons = Array.from(
@@ -563,13 +564,13 @@ export class ClaudeAdapter implements PlatformAdapter {
         } catch {}
       });
       if (typeof menuTrigger.click === 'function') menuTrigger.click();
-      await sleep(80);
+      await sleep(25);
 
       // Wait for Menu Popup
       const menu = await waitForElement<HTMLElement>(
         ['div[role="menu"]', '[data-radix-popper-content-wrapper]', 'div[data-state="open"]'],
         document,
-        1500
+        1000
       );
 
       // Find Delete in menu
@@ -612,7 +613,7 @@ export class ClaudeAdapter implements PlatformAdapter {
         } catch {}
       });
       if (typeof deleteItem.click === 'function') deleteItem.click();
-      await sleep(90);
+      await sleep(25);
 
       // Wait for confirmation dialog
       const dialog = await waitForElement<HTMLElement>(
@@ -686,9 +687,9 @@ export class ClaudeAdapter implements PlatformAdapter {
     if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) {
       return true;
     }
-    // 2. Poll in short intervals
-    for (let i = 0; i < 6; i++) {
-      await sleep(30);
+    // 2. Poll in ultra-short intervals (max 40ms)
+    for (let i = 0; i < 2; i++) {
+      await sleep(20);
       if (chat.elementRef && !document.body.contains(chat.elementRef)) {
         return true;
       }

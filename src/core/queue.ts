@@ -122,45 +122,91 @@ export class DeletionQueue {
     this.state = 'RUNNING';
     this.notifyProgress();
 
-    while (this.currentIndex < this.items.length) {
-      // Check for cancellation
-      if (this.isCancelled) {
-        this.state = 'CANCELLED';
-        break;
-      }
+    const concurrency = this.adapter.capabilities.supportsFastApi ? 3 : 1;
 
-      // Check for pause loop
-      while (this.isPaused && !this.isCancelled) {
-        await sleep(200);
-      }
-      if (this.isCancelled) {
-        this.state = 'CANCELLED';
-        break;
-      }
+    if (concurrency > 1) {
+      let nextIndex = 0;
+      const worker = async () => {
+        while (nextIndex < this.items.length && !this.isCancelled) {
+          while (this.isPaused && !this.isCancelled) {
+            await sleep(80);
+          }
+          if (this.isCancelled) break;
 
-      const chat = this.items[this.currentIndex];
-      const result = await this.processSingleChat(chat);
+          const idx = nextIndex++;
+          if (idx >= this.items.length) break;
 
-      this.results.push(result);
-      this.callbacks.onItemComplete?.(result);
+          const chat = this.items[idx];
+          this.currentIndex = idx;
+          this.notifyProgress();
 
-      // Log to local storage
-      await addActivityLog({
-        provider: chat.provider,
-        chatId: chat.id,
-        chatTitle: chat.title,
-        operation: 'delete',
-        status: result.status,
-        error: result.error,
-      });
+          const result = await this.processSingleChat(chat);
+          this.results.push(result);
+          this.callbacks.onItemComplete?.(result);
 
-      this.currentIndex++;
-      this.notifyProgress();
+          // Non-blocking log to local storage
+          addActivityLog({
+            provider: chat.provider,
+            chatId: chat.id,
+            chatTitle: chat.title,
+            operation: 'delete',
+            status: result.status,
+            error: result.error,
+          }).catch(() => {});
 
-      // If more items remain, apply human delay
-      if (this.currentIndex < this.items.length && !this.isCancelled) {
-        const delay = getHumanDelay(this.settings.minDelayMs, this.settings.maxDelayMs);
-        await sleep(delay);
+          this.notifyProgress();
+
+          if (this.settings.minDelayMs > 0 && !this.isCancelled) {
+            await sleep(this.settings.minDelayMs);
+          }
+        }
+      };
+
+      const workers = Array.from({ length: concurrency }, () => worker());
+      await Promise.all(workers);
+    } else {
+      while (this.currentIndex < this.items.length) {
+        // Check for cancellation
+        if (this.isCancelled) {
+          this.state = 'CANCELLED';
+          break;
+        }
+
+        // Check for pause loop
+        while (this.isPaused && !this.isCancelled) {
+          await sleep(100);
+        }
+        if (this.isCancelled) {
+          this.state = 'CANCELLED';
+          break;
+        }
+
+        const chat = this.items[this.currentIndex];
+        const result = await this.processSingleChat(chat);
+
+        this.results.push(result);
+        this.callbacks.onItemComplete?.(result);
+
+        // Non-blocking log to local storage
+        addActivityLog({
+          provider: chat.provider,
+          chatId: chat.id,
+          chatTitle: chat.title,
+          operation: 'delete',
+          status: result.status,
+          error: result.error,
+        }).catch(() => {});
+
+        this.currentIndex++;
+        this.notifyProgress();
+
+        // If more items remain, apply human delay
+        if (this.currentIndex < this.items.length && !this.isCancelled) {
+          const delay = getHumanDelay(this.settings.minDelayMs, this.settings.maxDelayMs);
+          if (delay > 0) {
+            await sleep(delay);
+          }
+        }
       }
     }
 

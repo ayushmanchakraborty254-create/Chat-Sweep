@@ -20,12 +20,24 @@ export class ShadowUIManager {
   private currentModal: 'none' | 'confirm' | 'progress' = 'none';
   private lastProgress: QueueProgress | null = null;
   private dryRunActive = false;
+  private triggerPos: { x: number; y: number } | null = null;
+  private actionBarPos: { x: number; y: number } | null = null;
 
   constructor(adapter: PlatformAdapter, settings: Settings) {
     this.adapter = adapter;
     this.settings = settings;
     this.selection = new SelectionManager();
     this.dryRunActive = settings.dryRunMode;
+
+    // Restore saved positions if any
+    try {
+      const savedTrigger = localStorage.getItem('chatsweep_trigger_pos');
+      if (savedTrigger) this.triggerPos = JSON.parse(savedTrigger);
+      const savedBar = localStorage.getItem('chatsweep_action_bar_pos');
+      if (savedBar) this.actionBarPos = JSON.parse(savedBar);
+    } catch {}
+
+    window.addEventListener('resize', () => this.repositionElementsOnResize());
 
     // Create shadow host
     this.host = document.createElement('chatsweep-root');
@@ -173,13 +185,15 @@ export class ShadowUIManager {
   }
 
   /**
-   * Floating Trigger Button
+   * Floating Trigger Button (Movable & Draggable)
    */
   private createFloatingTrigger(): HTMLElement {
     const btn = document.createElement('button');
     btn.className = `cs-floating-trigger ${this.isSelectionMode ? 'active' : ''}`;
     btn.setAttribute('aria-label', 'Toggle ChatSweep Bulk Selection');
+    btn.setAttribute('title', 'Click to toggle Bulk Mode. Drag to move anywhere.');
     btn.innerHTML = `
+      <span class="cs-drag-handle" aria-hidden="true" title="Drag to move anywhere">⋮⋮</span>
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/>
         <path d="M12 8v4"/>
@@ -193,12 +207,36 @@ export class ShadowUIManager {
       }
     `;
 
-    btn.onclick = () => this.toggleSelectionMode();
+    // Apply saved or custom position
+    if (this.triggerPos) {
+      const maxX = Math.max(8, window.innerWidth - 180);
+      const maxY = Math.max(8, window.innerHeight - 60);
+      const x = Math.max(8, Math.min(this.triggerPos.x, maxX));
+      const y = Math.max(8, Math.min(this.triggerPos.y, maxY));
+      btn.style.left = `${x}px`;
+      btn.style.top = `${y}px`;
+      btn.style.right = 'auto';
+      btn.style.bottom = 'auto';
+    }
+
+    this.attachDraggable(
+      btn,
+      (x, y) => {
+        this.triggerPos = { x, y };
+        try {
+          localStorage.setItem('chatsweep_trigger_pos', JSON.stringify({ x, y }));
+        } catch {}
+      },
+      () => {
+        this.toggleSelectionMode();
+      }
+    );
+
     return btn;
   }
 
   /**
-   * Sticky Action Bar
+   * Sticky Action Bar (Movable & Draggable)
    */
   private createActionBar(): HTMLElement {
     const bar = document.createElement('div');
@@ -208,7 +246,8 @@ export class ShadowUIManager {
     const totalVisible = this.filteredChats.length;
 
     bar.innerHTML = `
-      <div class="cs-bar-title">
+      <div class="cs-bar-title" title="Drag action bar to move anywhere">
+        <span class="cs-drag-handle" aria-hidden="true" title="Drag to move anywhere">⋮⋮</span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2">
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
@@ -248,6 +287,31 @@ export class ShadowUIManager {
         </button>
       </div>
     `;
+
+    // Apply saved action bar position if any
+    if (this.actionBarPos) {
+      const maxX = Math.max(8, window.innerWidth - 450);
+      const maxY = Math.max(8, window.innerHeight - 80);
+      const x = Math.max(8, Math.min(this.actionBarPos.x, maxX));
+      const y = Math.max(8, Math.min(this.actionBarPos.y, maxY));
+      bar.style.left = `${x}px`;
+      bar.style.top = `${y}px`;
+      bar.style.right = 'auto';
+      bar.style.bottom = 'auto';
+      bar.style.transform = 'none';
+    }
+
+    this.attachDraggable(
+      bar,
+      (x, y) => {
+        this.actionBarPos = { x, y };
+        try {
+          localStorage.setItem('chatsweep_action_bar_pos', JSON.stringify({ x, y }));
+        } catch {}
+      },
+      () => {},
+      '.cs-bar-title'
+    );
 
     // Event listeners
     const searchInput = bar.querySelector<HTMLInputElement>('#cs-search');
@@ -829,8 +893,8 @@ export class ShadowUIManager {
 
     const queueSettings = {
       ...this.settings,
-      minDelayMs: Math.min(this.settings.minDelayMs, 60),
-      maxDelayMs: Math.min(this.settings.maxDelayMs, 140),
+      minDelayMs: Math.min(this.settings.minDelayMs, 10),
+      maxDelayMs: Math.min(this.settings.maxDelayMs, 25),
       dryRunMode: this.dryRunActive,
     };
 
@@ -1041,6 +1105,120 @@ export class ShadowUIManager {
     setTimeout(() => {
       toast.remove();
     }, durationMs);
+  }
+
+  private repositionElementsOnResize(): void {
+    if (this.triggerPos) {
+      const btn = this.shadow.querySelector<HTMLElement>('.cs-floating-trigger');
+      if (btn) {
+        const maxX = Math.max(8, window.innerWidth - btn.offsetWidth - 8);
+        const maxY = Math.max(8, window.innerHeight - btn.offsetHeight - 8);
+        this.triggerPos.x = Math.max(8, Math.min(this.triggerPos.x, maxX));
+        this.triggerPos.y = Math.max(8, Math.min(this.triggerPos.y, maxY));
+        btn.style.left = `${this.triggerPos.x}px`;
+        btn.style.top = `${this.triggerPos.y}px`;
+      }
+    }
+    if (this.actionBarPos) {
+      const bar = this.shadow.querySelector<HTMLElement>('.cs-action-bar');
+      if (bar) {
+        const maxX = Math.max(8, window.innerWidth - bar.offsetWidth - 8);
+        const maxY = Math.max(8, window.innerHeight - bar.offsetHeight - 8);
+        this.actionBarPos.x = Math.max(8, Math.min(this.actionBarPos.x, maxX));
+        this.actionBarPos.y = Math.max(8, Math.min(this.actionBarPos.y, maxY));
+        bar.style.left = `${this.actionBarPos.x}px`;
+        bar.style.top = `${this.actionBarPos.y}px`;
+      }
+    }
+  }
+
+  private attachDraggable(
+    element: HTMLElement,
+    onDragEnd: (x: number, y: number) => void,
+    onClick: () => void,
+    handleSelector?: string
+  ): void {
+    let isPointerDown = false;
+    let isDragging = false;
+    let startX = 0;
+    let startY = 0;
+    let initialLeft = 0;
+    let initialTop = 0;
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0 && e.pointerType === 'mouse') return;
+      if (handleSelector) {
+        const target = e.target as HTMLElement | null;
+        if (!target?.closest(handleSelector)) return;
+      }
+
+      isPointerDown = true;
+      isDragging = false;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = element.getBoundingClientRect();
+      initialLeft = rect.left;
+      initialTop = rect.top;
+
+      try {
+        element.setPointerCapture(e.pointerId);
+      } catch {}
+    };
+
+    const onPointerMove = (e: PointerEvent) => {
+      if (!isPointerDown) return;
+
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+
+      if (!isDragging && Math.hypot(dx, dy) > 4) {
+        isDragging = true;
+        element.classList.add('cs-dragging');
+      }
+
+      if (isDragging) {
+        const maxX = Math.max(8, window.innerWidth - element.offsetWidth - 8);
+        const maxY = Math.max(8, window.innerHeight - element.offsetHeight - 8);
+        const newLeft = Math.max(8, Math.min(initialLeft + dx, maxX));
+        const newTop = Math.max(8, Math.min(initialTop + dy, maxY));
+
+        element.style.left = `${newLeft}px`;
+        element.style.top = `${newTop}px`;
+        element.style.right = 'auto';
+        element.style.bottom = 'auto';
+        element.style.transform = 'none';
+      }
+    };
+
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isPointerDown) return;
+      isPointerDown = false;
+      element.classList.remove('cs-dragging');
+
+      try {
+        element.releasePointerCapture(e.pointerId);
+      } catch {}
+
+      if (isDragging) {
+        isDragging = false;
+        const rect = element.getBoundingClientRect();
+        onDragEnd(Math.round(rect.left), Math.round(rect.top));
+      } else {
+        onClick();
+      }
+    };
+
+    const onPointerCancel = () => {
+      isPointerDown = false;
+      isDragging = false;
+      element.classList.remove('cs-dragging');
+    };
+
+    element.addEventListener('pointerdown', onPointerDown);
+    element.addEventListener('pointermove', onPointerMove);
+    element.addEventListener('pointerup', onPointerUp);
+    element.addEventListener('pointercancel', onPointerCancel);
   }
 }
 

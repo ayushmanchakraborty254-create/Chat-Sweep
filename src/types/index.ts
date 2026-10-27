@@ -52,6 +52,7 @@ export interface AdapterCapabilities {
   nativeBulkDelete: boolean;
   exportMetadata: boolean;
   guidedMode: boolean;
+  supportsFastApi?: boolean;
 }
 
 export interface PlatformAdapter {

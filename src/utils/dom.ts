@@ -40,7 +40,7 @@ export function queryAllWithFallbacks<T extends Element = HTMLElement>(
 export async function waitForElement<T extends HTMLElement = HTMLElement>(
   selector: string | string[],
   root: Document | Element = document,
-  timeoutMs = 4000
+  timeoutMs = 1200
 ): Promise<T | null> {
   const existing = queryWithFallbacks<T>(root, selector);
   if (existing) return existing;
@@ -59,7 +59,6 @@ export async function waitForElement<T extends HTMLElement = HTMLElement>(
     observer.observe(root instanceof Document ? document.body : root, {
       childList: true,
       subtree: true,
-      attributes: true,
     });
 
     setTimeout(() => {
@@ -76,7 +75,7 @@ export async function waitForElement<T extends HTMLElement = HTMLElement>(
  */
 export async function waitForElementToDisappear(
   elementOrSelector: Element | string,
-  timeoutMs = 4000
+  timeoutMs = 1500
 ): Promise<boolean> {
   const startTime = Date.now();
   while (Date.now() - startTime < timeoutMs) {
@@ -87,27 +86,37 @@ export async function waitForElementToDisappear(
       exists = document.body.contains(elementOrSelector);
     }
     if (!exists) return true;
-    await new Promise((r) => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 20));
   }
   return false;
 }
 
 /**
- * Simulates a realistic human mouse click on an element
+ * Simulates an instantaneous mouse click on an element without artificial animation delays
  */
 export async function triggerHumanClick(element: HTMLElement): Promise<void> {
-  element.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  await new Promise((r) => setTimeout(r, 80));
+  try {
+    element.scrollIntoView({ behavior: 'auto', block: 'nearest' });
+  } catch {}
 
   const mouseEvents = ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'];
   for (const eventType of mouseEvents) {
-    const event = new MouseEvent(eventType, {
-      view: window,
-      bubbles: true,
-      cancelable: true,
-      buttons: 1,
-    });
-    element.dispatchEvent(event);
+    try {
+      element.dispatchEvent(
+        new MouseEvent(eventType, {
+          view: window,
+          bubbles: true,
+          cancelable: true,
+          buttons: 1,
+        })
+      );
+    } catch {}
+  }
+
+  if (typeof (element as any).click === 'function') {
+    try {
+      (element as any).click();
+    } catch {}
   }
 }
 

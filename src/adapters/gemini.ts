@@ -185,7 +185,7 @@ export class GeminiAdapter implements PlatformAdapter {
 
     try {
       el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
-      await sleep(40);
+      await sleep(15);
 
       let menuTrigger = queryWithFallbacks<HTMLElement>(el, GEMINI_SELECTORS.menuTrigger);
       if (!menuTrigger) {
@@ -205,9 +205,9 @@ export class GeminiAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(menuTrigger);
-      await sleep(80);
+      await sleep(25);
 
-      const menu = await waitForElement<HTMLElement>(GEMINI_SELECTORS.menuPopup, document, 1500);
+      const menu = await waitForElement<HTMLElement>(GEMINI_SELECTORS.menuPopup, document, 1000);
       if (!menu) {
         return {
           chatId: chat.id,
@@ -238,9 +238,9 @@ export class GeminiAdapter implements PlatformAdapter {
       }
 
       await triggerHumanClick(deleteItem);
-      await sleep(90);
+      await sleep(25);
 
-      const dialog = await waitForElement<HTMLElement>(GEMINI_SELECTORS.confirmDialog, document, 1500);
+      const dialog = await waitForElement<HTMLElement>(GEMINI_SELECTORS.confirmDialog, document, 1000);
       if (!dialog) {
         return {
           chatId: chat.id,
@@ -301,9 +301,9 @@ export class GeminiAdapter implements PlatformAdapter {
     // 1. Immediate check: 0ms wait
     if (chat.elementRef && !document.body.contains(chat.elementRef)) return true;
     if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) return true;
-    // 2. Poll in short intervals
-    for (let i = 0; i < 6; i++) {
-      await sleep(30);
+    // 2. Poll in ultra-short intervals (max 40ms)
+    for (let i = 0; i < 2; i++) {
+      await sleep(20);
       if (chat.elementRef && !document.body.contains(chat.elementRef)) return true;
       if (chat.id && !document.querySelector(`a[href*="${chat.id}"]`)) return true;
     }
