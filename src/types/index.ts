@@ -121,6 +121,7 @@ export interface Settings {
   exportBeforeDelete: boolean;
   excludePinnedByDefault: boolean;
   enabledProviders: Record<ProviderId, boolean>;
+  extensionEnabled: boolean;
   theme: 'auto' | 'light' | 'dark';
   language: string;
 }

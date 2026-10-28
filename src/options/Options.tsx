@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { ProviderId, Settings } from '../types';
 import { registry } from '../core/registry';
 import { DEFAULT_SETTINGS, getSettings, saveSettings, clearActivityLogs } from '../core/storage';
-import { Sparkles, Save, RotateCcw, Shield, Trash2, CheckCircle2 } from 'lucide-react';
+import { Sparkles, Save, RotateCcw, Shield, Trash2, CheckCircle2, Power } from 'lucide-react';
 
 export const Options: React.FC = () => {
   const [settings, setSettingsState] = useState<Settings>(DEFAULT_SETTINGS);
@@ -59,6 +59,61 @@ export const Options: React.FC = () => {
               <span>Saved!</span>
             </div>
           )}
+        </div>
+
+        {/* Master Extension Switch */}
+        <div className={`p-4 rounded-xl border transition-all ${
+          settings.extensionEnabled !== false
+            ? 'bg-emerald-50/70 dark:bg-emerald-950/25 border-emerald-200 dark:border-emerald-800/40 shadow-sm'
+            : 'bg-slate-100/80 dark:bg-slate-800/60 border-slate-200 dark:border-slate-700'
+        }`}>
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-lg flex items-center justify-center transition-colors ${
+                settings.extensionEnabled !== false ? 'bg-emerald-600 text-white shadow-xs' : 'bg-slate-300 dark:bg-slate-700 text-slate-500'
+              }`}>
+                <Power className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="text-sm font-bold text-slate-800 dark:text-slate-100 flex items-center gap-2">
+                  <span>ChatSweep Master Switch</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
+                    settings.extensionEnabled !== false ? 'bg-emerald-600 text-white' : 'bg-slate-300 dark:bg-slate-700 text-slate-700 dark:text-slate-300'
+                  }`}>
+                    {settings.extensionEnabled !== false ? 'ENABLED' : 'DISABLED'}
+                  </span>
+                </div>
+                <div className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {settings.extensionEnabled !== false 
+                    ? 'Extension is active. Floating toolbar and checkboxes appear on supported AI platforms.' 
+                    : 'Extension is turned off. All in-page buttons, bulk mode, and checkboxes are completely disabled.'}
+                </div>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              role="switch"
+              aria-checked={settings.extensionEnabled !== false}
+              onClick={() => {
+                const nextState = settings.extensionEnabled === false ? true : false;
+                setSettingsState({ ...settings, extensionEnabled: nextState });
+                saveSettings({ extensionEnabled: nextState });
+                if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+                  chrome.runtime.sendMessage({ type: 'SET_EXTENSION_ENABLED', enabled: nextState }).catch(() => {});
+                }
+              }}
+              className={`relative inline-flex h-6 w-11 flex-shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                settings.extensionEnabled !== false ? 'bg-emerald-600' : 'bg-slate-300 dark:bg-slate-600'
+              }`}
+            >
+              <span
+                className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-md ring-0 transition duration-200 ease-in-out ${
+                  settings.extensionEnabled !== false ? 'translate-x-5' : 'translate-x-0'
+                }`}
+              />
+            </button>
+          </div>
         </div>
 
         {/* Timing Section */}

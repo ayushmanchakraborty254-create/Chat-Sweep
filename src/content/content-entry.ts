@@ -1,5 +1,5 @@
 import { registry } from '../core/registry';
-import { getSettings, saveDiscoveredChats } from '../core/storage';
+import { getSettings, saveSettings, saveDiscoveredChats } from '../core/storage';
 import { ShadowUIManager } from './shadow-ui';
 
 (async function initChatSweepContent() {
@@ -10,15 +10,28 @@ import { ShadowUIManager } from './shadow-ui';
     return;
   }
 
-  const settings = await getSettings();
-  if (!settings.enabledProviders[adapter.id]) {
-    return;
-  }
+  let currentSettings = await getSettings();
 
   let uiManager: ShadowUIManager | null = null;
   let unsubscribeObserver: (() => void) | null = null;
 
   async function initialize() {
+    try {
+      currentSettings = await getSettings();
+    } catch {}
+
+    if (!currentSettings.enabledProviders[adapter!.id] || currentSettings.extensionEnabled === false) {
+      if (uiManager) {
+        uiManager.unmount();
+        uiManager = null;
+      }
+      if (unsubscribeObserver) {
+        unsubscribeObserver();
+        unsubscribeObserver = null;
+      }
+      return;
+    }
+
     if (uiManager) {
       uiManager.unmount();
     }
@@ -26,7 +39,7 @@ import { ShadowUIManager } from './shadow-ui';
       unsubscribeObserver();
     }
 
-    uiManager = new ShadowUIManager(adapter!, settings);
+    uiManager = new ShadowUIManager(adapter!, currentSettings);
     uiManager.mount();
 
     // Initial scan
@@ -120,6 +133,24 @@ import { ShadowUIManager } from './shadow-ui';
         return true;
       }
 
+      if (message.type === 'SET_EXTENSION_ENABLED') {
+        const enabled = Boolean(message.enabled);
+        if (enabled) {
+          initialize();
+        } else {
+          if (uiManager) {
+            uiManager.unmount();
+            uiManager = null;
+          }
+          if (unsubscribeObserver) {
+            unsubscribeObserver();
+            unsubscribeObserver = null;
+          }
+        }
+        sendResponse({ success: true, enabled });
+        return true;
+      }
+
       if (message.type === 'LOAD_MORE_CHATS') {
         adapter!.loadMoreChats().then(async (success) => {
           const chats = await adapter!.getChatList();
@@ -132,6 +163,60 @@ import { ShadowUIManager } from './shadow-ui';
       return false;
     });
   }
+
+  // Live listener for settings changes
+  if (typeof chrome !== 'undefined' && chrome.storage?.onChanged) {
+    chrome.storage.onChanged.addListener((changes, area) => {
+      if (area === 'local' && changes.chatsweep_settings) {
+        const newSettings = changes.chatsweep_settings.newValue;
+        if (newSettings) {
+          if (newSettings.extensionEnabled === false) {
+            uiManager?.unmount();
+            uiManager = null;
+            if (unsubscribeObserver) {
+              unsubscribeObserver();
+              unsubscribeObserver = null;
+            }
+          } else if (newSettings.extensionEnabled === true && !uiManager) {
+            initialize();
+          }
+        }
+      }
+    });
+  }
+
+  // Global shortcut (Alt+C) to toggle extension ON/OFF quickly without mouse
+  window.addEventListener('keydown', async (e) => {
+    if (e.altKey && (e.key === 'c' || e.key === 'C')) {
+      e.preventDefault();
+      try {
+        const settings = await getSettings();
+        const nextState = !settings.extensionEnabled;
+        await saveSettings({ extensionEnabled: nextState });
+        if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+          chrome.runtime.sendMessage({ type: 'SET_EXTENSION_ENABLED', enabled: nextState }).catch(() => {});
+        }
+        if (nextState) {
+          await initialize();
+          uiManager?.showToast('ChatSweep turned ON');
+        } else {
+          if (uiManager) {
+            uiManager.showToast('ChatSweep turned OFF');
+            setTimeout(() => {
+              uiManager?.unmount();
+              uiManager = null;
+            }, 300);
+          }
+          if (unsubscribeObserver) {
+            unsubscribeObserver();
+            unsubscribeObserver = null;
+          }
+        }
+      } catch (err) {
+        console.error('[ChatSweep] Error toggling extension via shortcut:', err);
+      }
+    }
+  });
 
   // Start initialization when DOM is ready
   if (document.readyState === 'loading') {

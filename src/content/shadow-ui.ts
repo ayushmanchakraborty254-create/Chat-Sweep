@@ -3,6 +3,7 @@ import { SelectionManager } from '../core/selection';
 import { DeletionQueue } from '../core/queue';
 import { exportChatsToCSV, exportChatsToJSON, triggerFileDownload } from '../core/export';
 import { filterChatList } from '../utils/date-filters';
+import { getUIPositions, saveUIPositions, saveSettings } from '../core/storage';
 import shadowStyles from './styles.css?inline';
 
 export class ShadowUIManager {
@@ -14,6 +15,7 @@ export class ShadowUIManager {
   private queue: DeletionQueue | null = null;
 
   private isSelectionMode = false;
+  private isCollapsed = false;
   private chats: ChatItem[] = [];
   private filteredChats: ChatItem[] = [];
   private searchQuery = '';
@@ -22,6 +24,7 @@ export class ShadowUIManager {
   private dryRunActive = false;
   private triggerPos: { x: number; y: number } | null = null;
   private actionBarPos: { x: number; y: number } | null = null;
+  private actionBarDock: 'top' | 'bottom' | 'free' = 'bottom';
 
   constructor(adapter: PlatformAdapter, settings: Settings) {
     this.adapter = adapter;
@@ -29,13 +32,41 @@ export class ShadowUIManager {
     this.selection = new SelectionManager();
     this.dryRunActive = settings.dryRunMode;
 
-    // Restore saved positions if any
+    // Restore saved positions synchronously from localStorage if available
     try {
       const savedTrigger = localStorage.getItem('chatsweep_trigger_pos');
       if (savedTrigger) this.triggerPos = JSON.parse(savedTrigger);
       const savedBar = localStorage.getItem('chatsweep_action_bar_pos');
       if (savedBar) this.actionBarPos = JSON.parse(savedBar);
+      const savedDock = localStorage.getItem('chatsweep_action_bar_dock');
+      if (savedDock === 'top' || savedDock === 'bottom' || savedDock === 'free') {
+        this.actionBarDock = savedDock;
+      }
     } catch {}
+
+    // Synchronize asynchronously with chrome.storage.local
+    getUIPositions().then((pos) => {
+      let shouldRerender = false;
+      if (pos.triggerPos && (!this.triggerPos || pos.triggerPos.x !== this.triggerPos.x || pos.triggerPos.y !== this.triggerPos.y)) {
+        this.triggerPos = pos.triggerPos;
+        shouldRerender = true;
+      }
+      if (pos.actionBarPos) {
+        this.actionBarPos = pos.actionBarPos;
+        shouldRerender = true;
+      }
+      if (typeof pos.isCollapsed === 'boolean' && pos.isCollapsed !== this.isCollapsed) {
+        this.isCollapsed = pos.isCollapsed;
+        shouldRerender = true;
+      }
+      if (pos.actionBarDock && pos.actionBarDock !== this.actionBarDock) {
+        this.actionBarDock = pos.actionBarDock;
+        shouldRerender = true;
+      }
+      if (shouldRerender) {
+        this.render();
+      }
+    });
 
     window.addEventListener('resize', () => this.repositionElementsOnResize());
 
@@ -185,58 +216,135 @@ export class ShadowUIManager {
   }
 
   /**
-   * Floating Trigger Button (Movable & Draggable)
+   * Floating Trigger Button (Movable, Collapsible, with In-Page Power Toggle)
    */
   private createFloatingTrigger(): HTMLElement {
-    const btn = document.createElement('button');
-    btn.className = `cs-floating-trigger ${this.isSelectionMode ? 'active' : ''}`;
-    btn.setAttribute('aria-label', 'Toggle ChatSweep Bulk Selection');
-    btn.setAttribute('title', 'Click to toggle Bulk Mode. Drag to move anywhere.');
-    btn.innerHTML = `
-      <span class="cs-drag-handle" aria-hidden="true" title="Drag to move anywhere">⋮⋮</span>
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/>
-        <path d="M12 8v4"/>
-        <path d="M12 16h.01"/>
-      </svg>
-      <span>${this.isSelectionMode ? 'Close Bulk Mode' : 'Bulk Select'}</span>
-      ${
-        this.selection.getSelectedCount() > 0
-          ? `<span class="cs-badge">${this.selection.getSelectedCount()}</span>`
-          : ''
-      }
-    `;
+    const trigger = document.createElement('div');
+    trigger.className = `cs-floating-trigger ${this.isSelectionMode ? 'active' : ''} ${this.isCollapsed ? 'collapsed' : ''}`;
+    trigger.setAttribute('role', 'region');
+    trigger.setAttribute('aria-label', 'ChatSweep Bulk Controls');
 
-    // Apply saved or custom position
-    if (this.triggerPos) {
-      const maxX = Math.max(8, window.innerWidth - 180);
-      const maxY = Math.max(8, window.innerHeight - 60);
-      const x = Math.max(8, Math.min(this.triggerPos.x, maxX));
-      const y = Math.max(8, Math.min(this.triggerPos.y, maxY));
-      btn.style.left = `${x}px`;
-      btn.style.top = `${y}px`;
-      btn.style.right = 'auto';
-      btn.style.bottom = 'auto';
+    const selectedCount = this.selection.getSelectedCount();
+    const countBadgeHtml = selectedCount > 0 ? `<span class="cs-badge">${selectedCount}</span>` : '';
+
+    if (this.isCollapsed) {
+      trigger.setAttribute('title', 'ChatSweep (Minimized - click to expand, drag anywhere)');
+      trigger.innerHTML = `
+        <button class="cs-trigger-action" type="button" aria-label="Expand ChatSweep">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/>
+            <path d="M12 8v4"/>
+            <path d="M12 16h.01"/>
+          </svg>
+          ${countBadgeHtml}
+        </button>
+      `;
+    } else {
+      trigger.setAttribute('title', 'ChatSweep: Drag anywhere to move. Click to open bulk tools.');
+      trigger.innerHTML = `
+        <span class="cs-drag-handle" title="Drag to move anywhere" aria-label="Drag to move">⋮⋮</span>
+        <button class="cs-trigger-action" type="button" title="${this.isSelectionMode ? 'Exit Bulk Selection' : 'Open Bulk Selection'}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="m3 21 1.9-5.7a8.5 8.5 0 1 1 3.8 3.8z"/>
+            <path d="M12 8v4"/>
+            <path d="M12 16h.01"/>
+          </svg>
+          <span class="cs-trigger-action-text">${this.isSelectionMode ? 'Close Bulk Mode' : 'Bulk Select'}</span>
+          ${countBadgeHtml}
+        </button>
+        <div class="cs-trigger-tools">
+          <button class="cs-trigger-tool-btn cs-collapse-btn" type="button" title="Minimize button to small icon" aria-label="Minimize button">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          </button>
+          <button class="cs-trigger-tool-btn cs-power-btn" type="button" title="Turn OFF ChatSweep extension (hide all buttons and checkboxes)" aria-label="Turn off extension">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></svg>
+          </button>
+        </div>
+      `;
     }
 
+    // Smart non-blocking default position (middle right, avoids top navigation and bottom prompt area)
+    const defaultX = Math.max(8, window.innerWidth - (this.isCollapsed ? 55 : 185));
+    const defaultY = Math.max(80, Math.round(window.innerHeight * 0.42));
+    const maxX = Math.max(8, window.innerWidth - (this.isCollapsed ? 50 : 160));
+    const maxY = Math.max(8, window.innerHeight - 50);
+
+    const x = this.triggerPos ? Math.max(8, Math.min(this.triggerPos.x, maxX)) : defaultX;
+    const y = this.triggerPos ? Math.max(8, Math.min(this.triggerPos.y, maxY)) : defaultY;
+
+    trigger.style.left = `${x}px`;
+    trigger.style.top = `${y}px`;
+    trigger.style.right = 'auto';
+    trigger.style.bottom = 'auto';
+
+    // Tool listeners
+    const collapseBtn = trigger.querySelector<HTMLElement>('.cs-collapse-btn');
+    if (collapseBtn) {
+      collapseBtn.onclick = (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        this.isCollapsed = true;
+        saveUIPositions({ isCollapsed: true });
+        this.render();
+      };
+    }
+
+    const powerBtn = trigger.querySelector<HTMLElement>('.cs-power-btn');
+    if (powerBtn) {
+      powerBtn.onclick = async (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        await this.turnOffExtension();
+      };
+    }
+
+    // Draggable & action click
     this.attachDraggable(
-      btn,
-      (x, y) => {
-        this.triggerPos = { x, y };
+      trigger,
+      (newX, newY) => {
+        this.triggerPos = { x: newX, y: newY };
         try {
-          localStorage.setItem('chatsweep_trigger_pos', JSON.stringify({ x, y }));
+          localStorage.setItem('chatsweep_trigger_pos', JSON.stringify({ x: newX, y: newY }));
         } catch {}
+        saveUIPositions({ triggerPos: { x: newX, y: newY } });
       },
       () => {
-        this.toggleSelectionMode();
+        if (this.isCollapsed) {
+          this.isCollapsed = false;
+          saveUIPositions({ isCollapsed: false });
+          this.render();
+        } else {
+          this.toggleSelectionMode();
+        }
+      },
+      {
+        excludeSelector: '.cs-trigger-tool-btn',
       }
     );
 
-    return btn;
+    return trigger;
   }
 
   /**
-   * Sticky Action Bar (Movable & Draggable)
+   * Turn OFF extension completely from in-page toggle
+   */
+  public async turnOffExtension(): Promise<void> {
+    try {
+      await saveSettings({ extensionEnabled: false });
+      if (typeof chrome !== 'undefined' && chrome.runtime?.sendMessage) {
+        chrome.runtime.sendMessage({ type: 'SET_EXTENSION_ENABLED', enabled: false }).catch(() => {});
+      }
+    } catch (e) {
+      console.error(e);
+    }
+    this.showToast('ChatSweep turned OFF. Re-enable anytime from the extension icon in your browser toolbar or press Alt+C.');
+    setTimeout(() => {
+      this.unmount();
+    }, 300);
+  }
+
+  /**
+   * Sticky Action Bar (Movable, Dockable, and Draggable anywhere)
    */
   private createActionBar(): HTMLElement {
     const bar = document.createElement('div');
@@ -247,7 +355,7 @@ export class ShadowUIManager {
 
     bar.innerHTML = `
       <div class="cs-bar-title" title="Drag action bar to move anywhere">
-        <span class="cs-drag-handle" aria-hidden="true" title="Drag to move anywhere">⋮⋮</span>
+        <span class="cs-drag-handle" aria-hidden="true" title="Drag anywhere">⋮⋮</span>
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" stroke-width="2">
           <polyline points="20 6 9 17 4 12"></polyline>
         </svg>
@@ -278,6 +386,7 @@ export class ShadowUIManager {
           class="cs-btn cs-btn-danger" 
           id="cs-delete-selected" 
           ${selectedCount === 0 ? 'disabled' : ''}
+          title="Bulk delete selected chats"
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"></polyline>
@@ -285,12 +394,18 @@ export class ShadowUIManager {
           </svg>
           Delete (${selectedCount})
         </button>
+        <button class="cs-btn cs-dock-btn" id="cs-dock-toggle" title="Dock action bar to Top or Bottom to avoid blocking chat buttons">
+          ${this.actionBarDock === 'top' ? '⬇ Dock Bottom' : '⬆ Dock Top'}
+        </button>
+        <button class="cs-btn" id="cs-close-mode" title="Close Bulk Mode">
+          ✕
+        </button>
       </div>
     `;
 
-    // Apply saved action bar position if any
+    // Apply saved action bar position or dock top / bottom
     if (this.actionBarPos) {
-      const maxX = Math.max(8, window.innerWidth - 450);
+      const maxX = Math.max(8, window.innerWidth - 420);
       const maxY = Math.max(8, window.innerHeight - 80);
       const x = Math.max(8, Math.min(this.actionBarPos.x, maxX));
       const y = Math.max(8, Math.min(this.actionBarPos.y, maxY));
@@ -299,18 +414,34 @@ export class ShadowUIManager {
       bar.style.right = 'auto';
       bar.style.bottom = 'auto';
       bar.style.transform = 'none';
+    } else if (this.actionBarDock === 'top') {
+      bar.style.top = '20px';
+      bar.style.bottom = 'auto';
+      bar.style.left = '50%';
+      bar.style.transform = 'translateX(-50%)';
+    } else {
+      bar.style.bottom = '20px';
+      bar.style.top = 'auto';
+      bar.style.left = '50%';
+      bar.style.transform = 'translateX(-50%)';
     }
 
+    // Make the entire action bar draggable (except on input, buttons, links)
     this.attachDraggable(
       bar,
       (x, y) => {
         this.actionBarPos = { x, y };
+        this.actionBarDock = 'free';
         try {
           localStorage.setItem('chatsweep_action_bar_pos', JSON.stringify({ x, y }));
+          localStorage.setItem('chatsweep_action_bar_dock', 'free');
         } catch {}
+        saveUIPositions({ actionBarPos: { x, y }, actionBarDock: 'free' });
       },
       () => {},
-      '.cs-bar-title'
+      {
+        excludeSelector: 'input, button, a',
+      }
     );
 
     // Event listeners
@@ -398,6 +529,29 @@ export class ShadowUIManager {
       };
     }
 
+    const dockToggleBtn = bar.querySelector<HTMLButtonElement>('#cs-dock-toggle');
+    if (dockToggleBtn) {
+      dockToggleBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.actionBarDock = this.actionBarDock === 'top' ? 'bottom' : 'top';
+        this.actionBarPos = null;
+        try {
+          localStorage.removeItem('chatsweep_action_bar_pos');
+          localStorage.setItem('chatsweep_action_bar_dock', this.actionBarDock);
+        } catch {}
+        saveUIPositions({ actionBarDock: this.actionBarDock, actionBarPos: undefined });
+        this.render();
+      };
+    }
+
+    const closeModeBtn = bar.querySelector<HTMLButtonElement>('#cs-close-mode');
+    if (closeModeBtn) {
+      closeModeBtn.onclick = (e) => {
+        e.stopPropagation();
+        this.toggleSelectionMode();
+      };
+    }
+
     return bar;
   }
 
@@ -426,8 +580,8 @@ export class ShadowUIManager {
 
     // Update floating trigger badge
     const triggerBadge = this.shadow.querySelector<HTMLElement>('.cs-floating-trigger .cs-badge');
-    const triggerBtn = this.shadow.querySelector<HTMLElement>('.cs-floating-trigger');
-    if (triggerBtn) {
+    const triggerAction = this.shadow.querySelector<HTMLElement>('.cs-floating-trigger .cs-trigger-action') || this.shadow.querySelector<HTMLElement>('.cs-floating-trigger');
+    if (triggerAction) {
       if (selectedCount > 0) {
         if (triggerBadge) {
           triggerBadge.textContent = String(selectedCount);
@@ -435,7 +589,7 @@ export class ShadowUIManager {
           const badge = document.createElement('span');
           badge.className = 'cs-badge';
           badge.textContent = String(selectedCount);
-          triggerBtn.appendChild(badge);
+          triggerAction.appendChild(badge);
         }
       } else if (triggerBadge) {
         triggerBadge.remove();
@@ -1135,8 +1289,11 @@ export class ShadowUIManager {
   private attachDraggable(
     element: HTMLElement,
     onDragEnd: (x: number, y: number) => void,
-    onClick: () => void,
-    handleSelector?: string
+    onClick?: () => void,
+    options?: {
+      handleSelector?: string;
+      excludeSelector?: string;
+    }
   ): void {
     let isPointerDown = false;
     let isDragging = false;
@@ -1144,18 +1301,30 @@ export class ShadowUIManager {
     let startY = 0;
     let initialLeft = 0;
     let initialTop = 0;
+    let currentPointerId: number | null = null;
+    let suppressClick = false;
 
     const onPointerDown = (e: PointerEvent) => {
+      // Only process primary click
       if (e.button !== 0 && e.pointerType === 'mouse') return;
-      if (handleSelector) {
-        const target = e.target as HTMLElement | null;
-        if (!target?.closest(handleSelector)) return;
+
+      const target = e.target as HTMLElement | null;
+      if (!target) return;
+
+      if (options?.excludeSelector && target.closest(options.excludeSelector)) {
+        return;
+      }
+
+      if (options?.handleSelector && !target.closest(options.handleSelector)) {
+        return;
       }
 
       isPointerDown = true;
       isDragging = false;
+      suppressClick = false;
       startX = e.clientX;
       startY = e.clientY;
+      currentPointerId = e.pointerId;
 
       const rect = element.getBoundingClientRect();
       initialLeft = rect.left;
@@ -1164,6 +1333,10 @@ export class ShadowUIManager {
       try {
         element.setPointerCapture(e.pointerId);
       } catch {}
+
+      window.addEventListener('pointermove', onPointerMove, { capture: true, passive: false });
+      window.addEventListener('pointerup', onPointerUp, { capture: true, passive: false });
+      window.addEventListener('pointercancel', onPointerCancel, { capture: true, passive: false });
     };
 
     const onPointerMove = (e: PointerEvent) => {
@@ -1172,12 +1345,16 @@ export class ShadowUIManager {
       const dx = e.clientX - startX;
       const dy = e.clientY - startY;
 
-      if (!isDragging && Math.hypot(dx, dy) > 4) {
+      if (!isDragging && Math.hypot(dx, dy) >= 4) {
         isDragging = true;
+        suppressClick = true;
         element.classList.add('cs-dragging');
       }
 
       if (isDragging) {
+        e.preventDefault();
+        e.stopPropagation();
+
         const maxX = Math.max(8, window.innerWidth - element.offsetWidth - 8);
         const maxY = Math.max(8, window.innerHeight - element.offsetHeight - 8);
         const newLeft = Math.max(8, Math.min(initialLeft + dx, maxX));
@@ -1191,34 +1368,54 @@ export class ShadowUIManager {
       }
     };
 
-    const onPointerUp = (e: PointerEvent) => {
-      if (!isPointerDown) return;
+    const cleanup = () => {
       isPointerDown = false;
       element.classList.remove('cs-dragging');
+      window.removeEventListener('pointermove', onPointerMove, true);
+      window.removeEventListener('pointerup', onPointerUp, true);
+      window.removeEventListener('pointercancel', onPointerCancel, true);
+      if (currentPointerId !== null) {
+        try {
+          element.releasePointerCapture(currentPointerId);
+        } catch {}
+        currentPointerId = null;
+      }
+    };
 
-      try {
-        element.releasePointerCapture(e.pointerId);
-      } catch {}
+    const onPointerUp = (e: PointerEvent) => {
+      if (!isPointerDown) return;
 
-      if (isDragging) {
-        isDragging = false;
+      const wasDragging = isDragging;
+      cleanup();
+
+      if (wasDragging) {
+        e.preventDefault();
+        e.stopPropagation();
         const rect = element.getBoundingClientRect();
         onDragEnd(Math.round(rect.left), Math.round(rect.top));
-      } else {
+      } else if (onClick) {
         onClick();
       }
     };
 
     const onPointerCancel = () => {
-      isPointerDown = false;
-      isDragging = false;
-      element.classList.remove('cs-dragging');
+      cleanup();
     };
 
     element.addEventListener('pointerdown', onPointerDown);
-    element.addEventListener('pointermove', onPointerMove);
-    element.addEventListener('pointerup', onPointerUp);
-    element.addEventListener('pointercancel', onPointerCancel);
+
+    // Prevent accidental click when dragging ended
+    element.addEventListener(
+      'click',
+      (e) => {
+        if (suppressClick) {
+          e.preventDefault();
+          e.stopPropagation();
+          suppressClick = false;
+        }
+      },
+      true
+    );
   }
 }
 
